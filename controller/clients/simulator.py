@@ -4,9 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import random
-from collections.abc import Awaitable, Callable
+import tempfile
+from collections.abc import Awaitable, Callable, Iterator
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
+from io import TextIOWrapper
 from typing import Any, Self
 
 import httpx
@@ -127,12 +130,78 @@ class SimulatorClient:
             raise AmbiguousPostError(path, "successful response was not a JSON object")
         return payload
 
-    async def _get_json(self, path: str) -> Any:
+    async def list_chunks(self, kind: str, after: int = -1) -> list[dict[str, Any]]:
+        """List event descriptors through the documented read endpoint."""
+        if kind not in {"events", "history"}:
+            raise ValueError("chunk kind must be events or history")
+        if isinstance(after, bool) or not isinstance(after, int) or after < -1:
+            raise ValueError("chunk cursor must be an integer >= -1")
+        payload = await self._get_json(
+            "/events/chunks", params={"kind": kind, "after": after}
+        )
+        if not isinstance(payload, list) or any(
+            not isinstance(item, dict) for item in payload
+        ):
+            raise SimulatorError("chunk listing response must be a list of objects")
+        return payload
+
+    @asynccontextmanager
+    async def stream_chunk_lines(self, chunk_number: int):
+        """Download NDJSON with bounded RAM, then expose its lines incrementally.
+
+        The spool keeps up to 1 MiB in memory and rolls larger downloads to the
+        operating system's temporary storage. A failed transfer is retried
+        before any partial body is exposed to the parser.
+        """
+        if (
+            isinstance(chunk_number, bool)
+            or not isinstance(chunk_number, int)
+            or chunk_number < 0
+        ):
+            raise ValueError("chunk number must be a nonnegative integer")
+        client = self._require_client()
+        path = f"/events/chunks/{chunk_number}"
+        attempts = self._settings.get_retries + 1
+        with tempfile.SpooledTemporaryFile(max_size=1024 * 1024, mode="w+b") as body:
+            for attempt in range(attempts):
+                body.seek(0)
+                body.truncate()
+                try:
+                    async with client.stream("GET", path) as response:
+                        if (
+                            self._is_retryable_status(response.status_code)
+                            and attempt + 1 < attempts
+                        ):
+                            delay = self._retry_after(response)
+                            if delay is None:
+                                delay = self._backoff(attempt)
+                            await self._sleep(delay)
+                            continue
+                        self._raise_for_status(response, path)
+                        async for block in response.aiter_bytes():
+                            body.write(block)
+                    break
+                except httpx.RequestError as exc:
+                    if attempt + 1 == attempts:
+                        raise SimulatorError(
+                            f"GET {path} failed after {attempts} attempts ({type(exc).__name__})"
+                        ) from None
+                    await self._sleep(self._backoff(attempt))
+            else:
+                raise SimulatorError(f"GET {path} exhausted its bounded retry policy")
+
+            body.seek(0)
+            with TextIOWrapper(body, encoding="utf-8", newline="") as text_body:
+                yield _iter_lines(text_body)
+
+    async def _get_json(
+        self, path: str, *, params: dict[str, object] | None = None
+    ) -> Any:
         client = self._require_client()
         attempts = self._settings.get_retries + 1
         for attempt in range(attempts):
             try:
-                response = await client.get(path)
+                response = await client.get(path, params=params)
             except httpx.RequestError as exc:
                 if attempt + 1 == attempts:
                     raise SimulatorError(
@@ -200,3 +269,11 @@ class SimulatorClient:
                 retry_at = retry_at.replace(tzinfo=UTC)
             seconds = (retry_at - datetime.now(UTC)).total_seconds()
         return min(max(seconds, 0.0), self._settings.retry_max_backoff_seconds)
+
+
+def _iter_lines(stream: TextIOWrapper) -> Iterator[str]:
+    try:
+        for line in stream:
+            yield line.rstrip("\r\n")
+    except UnicodeError as exc:
+        raise SimulatorError("chunk response is not valid UTF-8") from exc

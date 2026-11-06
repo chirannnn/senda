@@ -25,8 +25,8 @@
 
 | Subtask | Status | Validation | Commit |
 |---|---|---|---|
-| 1. Ingestion foundation | COMPLETE | `.venv/Scripts/python.exe -m pytest -q tests/unit/ingestion/` — 13 passed; Ruff check/format and `git diff --check` passed | pending |
-| 2. Historical ingestion | NOT STARTED | — | — |
+| 1. Ingestion foundation | COMPLETE | `.venv/Scripts/python.exe -m pytest -q tests/unit/ingestion/` — 13 passed; Ruff check/format and `git diff --check` passed | `d921490` |
+| 2. Historical ingestion | COMPLETE | `.venv/Scripts/python.exe -m pytest -q tests/unit/ingestion/ tests/unit/test_simulator_client.py` — 25 passed; Ruff check/format and `git diff --check` passed | pending |
 | 3. Transactional persistence | NOT STARTED | — | — |
 | 4. Live ingestion | NOT STARTED | — | — |
 | 5. Crash recovery | NOT STARTED | — | — |
@@ -161,4 +161,4 @@ Do not rewrite prior history.
 
 ## Next action
 
-Chunk 2 and the repository structure refactor are complete. Chunk 3 subtask 1 (ingestion foundation) is complete; subtask 2 (historical ingestion) is next. No later Chunk 3 subtask has started.
+Chunk 2 and the repository structure refactor are complete. Chunk 3 subtasks 1–2 are complete; subtask 3 (transactional persistence) is next. No later Chunk 3 subtask has started.
