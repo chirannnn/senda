@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 _CONTEXT_FIELDS = (
@@ -22,7 +22,7 @@ class JSONFormatter(logging.Formatter):
     """Format log records as one JSON object per line."""
 
     def format(self, record: logging.LogRecord) -> str:
-        timestamp = datetime.fromtimestamp(record.created, timezone.utc).isoformat()
+        timestamp = datetime.fromtimestamp(record.created, UTC).isoformat()
         payload: dict[str, Any] = {
             "timestamp": timestamp,
             "severity": record.levelname,
@@ -39,7 +39,9 @@ def configure_logging(level: str = "INFO") -> None:
     """Configure the process root logger for safe structured output."""
     resolved_level = getattr(logging, level.upper(), None)
     if not isinstance(resolved_level, int):
-        raise ValueError("log level must be DEBUG, INFO, WARNING, ERROR, or CRITICAL")
+        raise ValueError(  # noqa: TRY004 - this is an invalid string value, not a wrong type
+            "log level must be DEBUG, INFO, WARNING, ERROR, or CRITICAL"
+        )
 
     handler = logging.StreamHandler()
     handler.setFormatter(JSONFormatter())

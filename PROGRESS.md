@@ -36,8 +36,8 @@
 
 | Subtask | Status | Validation | Commit |
 |---|---|---|---|
-| 1. Package foundation, typed errors and JSON logging | COMPLETE | `python -m pytest -q tests/unit/test_logging.py` — 2 passed; `compileall` passed | `feat(runtime): add package foundation and safe JSON logging` |
-| 2. Typed configuration and validation | NOT STARTED | — | — |
+| 1. Package foundation, typed errors and JSON logging | COMPLETE | `python -m pytest -q tests/unit/test_logging.py` — 2 passed; `compileall` passed | `e547b63 feat(runtime): add package foundation and safe JSON logging` |
+| 2. Typed configuration and validation | COMPLETE | 20 unit tests passed; Ruff check/format passed; `compileall` passed | `feat(config): add validated runtime settings` |
 | 3. Async simulator HTTP client | NOT STARTED | — | — |
 | 4. Runtime bootstrap, advance loop and graceful stop | NOT STARTED | — | — |
 | 5. CLI, cross-platform launchers, docs and final verification | NOT STARTED | — | — |
