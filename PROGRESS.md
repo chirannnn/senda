@@ -10,7 +10,7 @@
 
 | Chunk | Name | Status | Commit |
 |---|---|---|---|
-| 1 | Runtime and launcher | COMPLETE | `730cf26 feat(runtime): add readiness and graceful advance loop` plus final CLI/docs commit below |
+| 1 | Runtime and launcher | COMPLETE | `cfc28d2`, `730cf26`, `71bdd8a` (and earlier foundation/config commits listed below) |
 | 2 | Durable schema and audit | NOT STARTED | — |
 | 3 | Simulator chunk ingestion | NOT STARTED | — |
 | 4 | History, KPI facts, audit query | NOT STARTED | — |
@@ -39,8 +39,8 @@
 | 1. Package foundation, typed errors and JSON logging | COMPLETE | `python -m pytest -q tests/unit/test_logging.py` — 2 passed; `compileall` passed | `e547b63 feat(runtime): add package foundation and safe JSON logging` |
 | 2. Typed configuration and validation | COMPLETE | 20 unit tests passed; Ruff check/format passed; `compileall` passed | `196a9ec feat(config): add validated runtime settings` |
 | 3. Async simulator HTTP client | COMPLETE | 28 unit tests passed; Ruff check/format passed; `compileall` passed | `cfc28d2 feat(http): add bounded async simulator client` |
-| 4. Runtime bootstrap, advance loop and graceful stop | COMPLETE | 5 runtime unit tests passed; Ruff check/format passed; `compileall` passed | `feat(runtime): add readiness and graceful advance loop` |
-| 5. CLI, cross-platform launchers, docs and final verification | COMPLETE | Full suite: 42 passed; Ruff check/format and compileall passed for `controller` and `tests/unit`; Git Bash launcher syntax and argument/failure exits verified | `feat(cli): add virtualenv launcher and runtime documentation` |
+| 4. Runtime bootstrap, advance loop and graceful stop | COMPLETE | 5 runtime unit tests passed; Ruff check/format passed; `compileall` passed | `730cf26 feat(runtime): add readiness and graceful advance loop` |
+| 5. CLI, cross-platform launchers, docs and final verification | COMPLETE | Full suite: 42 passed; Ruff check/format and compileall passed for `controller` and `tests/unit`; Git Bash launcher syntax and argument/failure exits verified | `71bdd8a feat(cli): add virtualenv launcher and runtime documentation` |
 
 The Chunk 1 runtime is a foundation only. It does not yet persist events or advance intents and does not make optimization or governance decisions. It halts on ambiguous advance outcomes rather than issuing a duplicate POST; durable reconciliation is required in the later persistence/recovery chunks. Public simulator scenarios were not run as part of Chunk 1.
 
@@ -96,7 +96,7 @@ Chunk 1 commits (created incrementally; none pushed):
 - `196a9ec feat(config): add validated runtime settings`
 - `cfc28d2 feat(http): add bounded async simulator client`
 - `730cf26 feat(runtime): add readiness and graceful advance loop`
-- `TBD feat(cli): add virtualenv launcher and runtime documentation` (fill in the resulting commit hash immediately after commit)
+- `71bdd8a feat(cli): add virtualenv launcher and runtime documentation`
 
 Do not rewrite prior history.
 
