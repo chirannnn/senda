@@ -11,6 +11,7 @@ _CONTEXT_FIELDS = (
     "event",
     "operation",
     "status_code",
+    "signal_number",
     "simulated_time",
     "finished",
     "workflow_count",

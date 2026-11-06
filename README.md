@@ -73,12 +73,31 @@ SUBMISSION_TEMPLATE.md    copy to SUBMISSION.md
 ```
 
 ```bash
-pip install -r requirements.txt
 python -m sim baseline --scenario scenarios/public_01_dev.yaml --run-dir runs/base01
 python -m sim serve    --scenario scenarios/public_01_dev.yaml --run-dir runs/mine01     # :8700
 ./run.sh http://127.0.0.1:8700                                                        # your controller
 python -m sim grade --run runs/mine01 --baseline runs/base01 --out reports/public_01.md
 ```
+
+### Controller runtime setup
+
+The controller requires Python 3.12 and its project virtual environment. On Linux, create it with
+`python3.12 -m venv .venv`; on Windows PowerShell use `py -3.12 -m venv .venv`. Install the repository
+dependencies with `.venv/bin/python -m pip install -r requirements.txt` on Linux or
+`.venv\Scripts\python.exe -m pip install -r requirements.txt` in PowerShell. Start it with
+`./run.sh http://127.0.0.1:8700` from Linux/macOS Bash or Windows Git Bash. PowerShell can invoke the same
+entry point directly with `.\.venv\Scripts\python.exe -m controller http://127.0.0.1:8700`.
+
+`run.sh` selects the local virtual environment and does not start or require Docker or PostgreSQL. The runtime
+uses `CONTROLLER_*` environment settings for advance interval, HTTP timeouts, bounded GET retries, connection
+limits, and log level; defaults are listed in `controller/config/settings.py`. It checks simulator health,
+workflows and state over HTTP, then advances until the simulator reports completion. `Ctrl+C` or `SIGTERM`
+stops after any in-flight HTTP operation finishes. JSON logs go to stderr; the simulator URL and credentials
+are not logged. An ambiguous advance response exits safely without issuing another advance.
+
+This runtime foundation does not yet persist events or advance intents and does not make optimization or
+governance decisions. Those are implemented in later plan chunks; do not treat Chunk 1 alone as the completed
+assessment controller.
 
 **Ground rules for the simulator**
 - Your controller may only know what the HTTP API tells it. Reading `runs/`, importing `sim`, or parsing

@@ -1,16 +1,16 @@
 # Progress Tracking — Outcome-First Agent Loop
 
-## Overall status: IN PROGRESS — CHUNK 1
+## Overall status: COMPLETE — CHUNK 1
 
-**Current phase:** Chunk 1 implementation
+**Current phase:** Chunk 1 complete; awaiting user review
 **Current chunk:** 1 — Runtime and launcher
-**Current next action:** Complete Chunk 1 subtasks; do not begin Chunk 2.
+**Current next action:** Wait for explicit user approval before starting Chunk 2.
 
 ## Implementation progress
 
 | Chunk | Name | Status | Commit |
 |---|---|---|---|
-| 1 | Runtime and launcher | IN PROGRESS | — |
+| 1 | Runtime and launcher | COMPLETE | `730cf26 feat(runtime): add readiness and graceful advance loop` plus final CLI/docs commit below |
 | 2 | Durable schema and audit | NOT STARTED | — |
 | 3 | Simulator chunk ingestion | NOT STARTED | — |
 | 4 | History, KPI facts, audit query | NOT STARTED | — |
@@ -40,7 +40,9 @@
 | 2. Typed configuration and validation | COMPLETE | 20 unit tests passed; Ruff check/format passed; `compileall` passed | `196a9ec feat(config): add validated runtime settings` |
 | 3. Async simulator HTTP client | COMPLETE | 28 unit tests passed; Ruff check/format passed; `compileall` passed | `cfc28d2 feat(http): add bounded async simulator client` |
 | 4. Runtime bootstrap, advance loop and graceful stop | COMPLETE | 5 runtime unit tests passed; Ruff check/format passed; `compileall` passed | `feat(runtime): add readiness and graceful advance loop` |
-| 5. CLI, cross-platform launchers, docs and final verification | NOT STARTED | — | — |
+| 5. CLI, cross-platform launchers, docs and final verification | COMPLETE | Full suite: 42 passed; Ruff check/format and compileall passed for `controller` and `tests/unit`; Git Bash launcher syntax and argument/failure exits verified | `feat(cli): add virtualenv launcher and runtime documentation` |
+
+The Chunk 1 runtime is a foundation only. It does not yet persist events or advance intents and does not make optimization or governance decisions. It halts on ambiguous advance outcomes rather than issuing a duplicate POST; durable reconciliation is required in the later persistence/recovery chunks. Public simulator scenarios were not run as part of Chunk 1.
 
 Subtask 4 starts the simulator through documented readiness/state/workflow reads and advances until `finished`, with graceful stopping between requests. A `409 finished` response is reconciled by reading state. An ambiguous advance stops the process without another POST. Durable advance-intent persistence and recovery are intentionally not implemented in Chunk 1 and remain required in the later database/recovery chunks.
 
@@ -52,6 +54,8 @@ Subtask 4 starts the simulator through documented readiness/state/workflow reads
 | public_02_incidents | NOT RUN | — |
 | public_03_load | NOT RUN | — |
 | Crash recovery | NOT RUN | — |
+
+Chunk 1 runtime and launcher tests use fakes/HTTPX mock transport and do not require the assessment simulator or Docker. No full assessment scenario, load run, crash-recovery demonstration, or type checker run has been performed. Ruff initially found a pre-existing import-order issue in `tests/test_sim.py`; that simulator contract test file was left unchanged. Ruff check and format succeeded for the controller and `tests/unit`.
 
 No assessment scenario or full end-to-end run has been performed yet. Chunk 1 unit-test results are tracked in the subtask table above.
 
@@ -86,8 +90,16 @@ No assessment scenario or full end-to-end run has been performed yet. Chunk 1 un
 
 ## Git history
 
-Record each genuine Chunk 1 commit in the subtask table above. Do not rewrite prior history.
+Chunk 1 commits (created incrementally; none pushed):
+
+- `e547b63 feat(runtime): add package foundation and safe JSON logging`
+- `196a9ec feat(config): add validated runtime settings`
+- `cfc28d2 feat(http): add bounded async simulator client`
+- `730cf26 feat(runtime): add readiness and graceful advance loop`
+- `TBD feat(cli): add virtualenv launcher and runtime documentation` (fill in the resulting commit hash immediately after commit)
+
+Do not rewrite prior history.
 
 ## Next action
 
-Complete Chunk 1 only, then wait for explicit user approval before Chunk 2.
+Chunk 1 is complete. Wait for explicit user approval before Chunk 2.
