@@ -3,8 +3,8 @@ import os
 import pytest
 from sqlalchemy import text
 
-from controller.audit import AuditEntry, AuditLog
-from controller.store import (
+from controller.storage.audit import AuditEntry, AuditLog
+from controller.storage.store import (
     CheckpointRegressionError,
     DatabaseStore,
     EventConflictError,

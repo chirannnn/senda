@@ -2,7 +2,7 @@
 
 ## Overall status: COMPLETE — CHUNK 2
 
-**Current phase:** Chunk 2 complete; awaiting review
+**Current phase:** Repository structure refactor complete; Chunks 1–2 remain complete
 **Current chunk:** 2 — Durable schema and audit
 **Current next action:** Chunk 3 — Chunk ingestion.
 
@@ -50,7 +50,7 @@
 | 2. Async database store and configuration | COMPLETE | 6 configuration/lifecycle unit tests passed; Ruff and compile checks passed | `2443889 feat(storage): add async database store` |
 | 3. Event uniqueness and atomic persistence primitives | COMPLETE | PostgreSQL insert/read, duplicate no-op, and conflicting replay tests passed; 12 schema/store tests passed | `31af0ea feat(storage): persist raw events idempotently` |
 | 4. Checkpoint, audit and outbox operations | COMPLETE | PostgreSQL store tests passed, including atomic chunk/checkpoint writes, rollback, regression rejection, audit and outbox persistence | `a3d7a6b feat(storage): add checkpoint audit and outbox operations` |
-| 5. PostgreSQL failure/restart and migration verification | COMPLETE | `tests/controller/test_store.py`: 11 passed; full suite: 63 passed; repeat migrations and Alembic schema check passed; Ruff and compile checks passed | `e88ed27 feat: add durable event and audit store` |
+| 5. PostgreSQL failure/restart and migration verification | COMPLETE | `tests/integration/storage/test_store.py`: 11 passed; full suite: 63 passed; repeat migrations and Alembic schema check passed; Ruff and compile checks passed | `e88ed27 feat: add durable event and audit store` |
 
 Subtask 1 defines controller-owned run/workflow references, raw event envelopes, nullable ordered-descriptor checkpoints, append-only audit records, and deduplicated outbox operations. Event payloads remain JSON without inferred simulator fields. Checkpoint positions have no numeric consecutiveness constraint. The initial Alembic migration was applied and rerun against the isolated PostgreSQL test database; one version row remained and `alembic check` found no schema drift.
 
@@ -64,11 +64,11 @@ Subtask 5 verified database initialization, migration application and repeat app
 
 ### Chunk 2 files and implementation
 
-- Added `controller/schema.py` with controller run, workflow reference, raw event, processing checkpoint, audit and outbox tables; raw simulator payloads are JSON and no event fields beyond ID, descriptor chunk and kind are projected.
+- Added `controller/storage/models.py` with controller run, workflow reference, raw event, processing checkpoint, audit and outbox tables; raw simulator payloads are JSON and no event fields beyond ID, descriptor chunk and kind are projected.
 - Added Alembic configuration, async environment and initial revision `0001_durable_store`.
-- Added `controller/store.py` for environment-supplied async PostgreSQL connections, migration, transactions, idempotent raw-event insertion, atomic event/checkpoint commits, run/workflow/checkpoint methods and outbox persistence/status.
-- Added `controller/audit.py` for append-only audit writes and workflow queries.
-- Added PostgreSQL integration fixtures/tests under `tests/controller/`.
+- Added `controller/storage/store.py` for environment-supplied async PostgreSQL connections, migration, transactions, idempotent raw-event insertion, atomic event/checkpoint commits, run/workflow/checkpoint methods and outbox persistence/status.
+- Added `controller/storage/audit.py` for append-only audit writes and workflow queries.
+- Added PostgreSQL integration fixtures/tests under `tests/integration/storage/`; schema and config checks are under `tests/unit/`.
 - Updated `.gitignore` for local environment files and SQLite files. No dependency changes were needed.
 
 The Chunk 1 runtime is a foundation only. It does not yet persist events or advance intents and does not make optimization or governance decisions. It halts on ambiguous advance outcomes rather than issuing a duplicate POST; durable reconciliation is required in the later persistence/recovery chunks. Public simulator scenarios were not run as part of Chunk 1.
@@ -84,11 +84,20 @@ Subtask 4 starts the simulator through documented readiness/state/workflow reads
 | public_03_load | NOT RUN | — |
 | Crash recovery | NOT RUN | — |
 
-Chunk 2 verification used `CONTROLLER_TEST_DATABASE_URL` for an isolated PostgreSQL 18 test database outside the repository. `python -m pytest -q tests/controller/test_store.py` — **11 passed**. `python -m pytest -q` — **63 passed** with PostgreSQL integration tests enabled. `ruff check controller tests/controller tests/unit migrations`, `ruff format --check controller tests/controller tests/unit migrations`, `python -m compileall -q controller tests migrations`, `alembic check`, and `git diff --check` passed. No assessment scenario was run.
+Chunk 2 verification used `CONTROLLER_TEST_DATABASE_URL` for an isolated PostgreSQL 18 test database outside the repository. `python -m pytest -q tests/integration/storage/test_store.py` — **11 passed**. `python -m pytest -q` — **63 passed** with PostgreSQL integration tests enabled. `ruff check controller tests/integration tests/unit migrations`, `ruff format --check controller tests/integration tests/unit migrations`, `python -m compileall -q controller tests migrations`, `alembic check`, and `git diff --check` passed. No assessment scenario was run.
 
-Chunk 1 runtime and launcher tests use fakes/HTTPX mock transport and do not require the assessment simulator or Docker. No full assessment scenario, load run, crash-recovery demonstration, or type checker run has been performed. Ruff initially found a pre-existing import-order issue in `tests/test_sim.py`; that simulator contract test file was left unchanged. Ruff check and format succeeded for the controller and `tests/unit`.
+Chunk 1 runtime and launcher tests use fakes/HTTPX mock transport and do not require the assessment simulator or Docker. No full assessment scenario, load run, crash-recovery demonstration, or type checker run has been performed. Ruff initially found a pre-existing import-order issue in the simulator contract test; it was corrected as an import-only cleanup while moving that test to `tests/contract/`. Ruff check and formatting now cover `controller`, `tests`, and `migrations`.
 
 No assessment scenario or full end-to-end run has been performed yet. Chunk 1 unit-test results are tracked in the subtask table above.
+
+## Repository structure refactor (2026-11-07)
+
+- Grouped database models, async connection/store code, and audit access under `controller/storage/` without changing model definitions or migration revision IDs.
+- Separated database-backed persistence tests into `tests/integration/storage/`; kept schema/config checks in `tests/unit/`; moved the existing simulator test suite to `tests/contract/` without changing test behavior.
+- Kept root-level `alembic.ini` and the conventional `migrations/` directory; updated migration metadata imports and the store's lookup of the root Alembic config.
+- Added the current tree to README. No Chunk 3 code has started.
+- Verification after the refactor: `.venv/Scripts/python.exe -m pytest -q` — 63 passed; `ruff check controller tests migrations` — passed; `ruff format --check controller tests migrations` — passed; `python -m compileall -q controller tests migrations` — passed; `alembic -c alembic.ini check` against the isolated PostgreSQL 18 test database — no new upgrade operations detected; `git diff --check` — passed. No schema or migration revision changed.
+- One focused refactor commit is created after verification; no push was made.
 
 ## Approved and unapproved decisions
 
@@ -104,7 +113,7 @@ No assessment scenario or full end-to-end run has been performed yet. Chunk 1 un
 - Public HTTP interface documents health/state, workflow/config/history, event chunk listing/fetch, advance, approval submit/list/get, apply, policy-gated auto-apply, suggestion and validation.
 - Chunk IDs globally increase; event IDs strictly increase; history is exposed in chunks before D0. Deduplicate history/live together.
 - Approval states include pending, approved, rejected, expired, applied/lapsed; stale version requires reread/re-evaluation. Prompt change needs matching validation evidence meeting policy. Apply retry idempotency after lost response is undocumented.
-- Existing repo has no controller/schema/migrations/Docker files. Existing `run.sh` uses naive example. Docker is permitted but not required.
+- At initial repository review there was no controller or migration structure; the current implemented layout is documented above. Docker is permitted but not required.
 - README says any language/storage and does not require or document an assessment-provided database or pin a Python version. Python 3.12 grammar parsing succeeded for six inspected assessment/runtime source files, and Python 3.12.10 is now installed in `.venv`.
 - The pre-existing host PostgreSQL 18 service on port 5432 was not used for development. Local development uses the verified Compose-managed PostgreSQL 18.6 instance on port 5433.
 - The Compose-managed DB authenticated through async SQLAlchemy. Named-volume data survived a container restart. Credentials are in the external local env file, not source control.
@@ -141,4 +150,4 @@ Do not rewrite prior history.
 
 ## Next action
 
-Chunk 2 is complete. Next: Chunk 3 — Chunk ingestion. Chunk 3 has not started.
+Chunk 2 and the repository structure refactor are complete. Next: Chunk 3 — Chunk ingestion. Chunk 3 has not started.

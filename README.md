@@ -101,7 +101,8 @@ assessment controller.
 
 ### Durable storage (Chunk 2)
 
-The async store uses `CONTROLLER_DATABASE_URL` in SQLAlchemy's `postgresql+asyncpg://...` form. Set it only in
+The async store in `controller/storage/` uses `CONTROLLER_DATABASE_URL` in SQLAlchemy's
+`postgresql+asyncpg://...` form. Set it only in
 the current process environment using the local development credentials stored outside the repository or a
 database connection explicitly supplied for the assessment. Do not put the URL in source, `.env` files under
 version control, command output, or logs. `DatabaseStore.initialize()` checks connectivity and
@@ -111,6 +112,23 @@ the Chunk 1 launcher. For manual migration work, set the environment variable in
 Linux. Storage is not yet wired into controller execution; Chunk 3 will connect it to event
 ingestion. Store integration tests require `CONTROLLER_TEST_DATABASE_URL` to point at a disposable PostgreSQL
 database.
+
+### Repository layout
+
+```text
+controller/
+  clients/          simulator HTTP client
+  config/           runtime settings
+  errors/           typed application errors
+  observability/    structured logging
+  runtime/          process lifecycle
+  storage/          database models, async store, audit log
+migrations/         Alembic environment and versioned revisions
+tests/
+  unit/             isolated controller tests
+  integration/storage/  PostgreSQL-backed persistence tests
+  contract/         simulator contract tests
+```
 
 **Ground rules for the simulator**
 - Your controller may only know what the HTTP API tells it. Reading `runs/`, importing `sim`, or parsing

@@ -1,11 +1,12 @@
 """Smoke tests for the simulator contract. Run: python -m pytest -q tests"""
+
 import copy
 
 import pytest
 
+from sim.grader import grade
 from sim.scenario import load_scenario
 from sim.world import ApiError, World
-from sim.grader import grade
 
 
 @pytest.fixture()
@@ -16,9 +17,18 @@ def world(tmp_path):
 
 
 def _body(w, wid, cfg, **kw):
-    b = {"proposal_id": kw.pop("pid", "p1"), "workflow_id": wid, "base_version": w.get_config(wid)["version"],
-         "proposed_config": cfg, "change_summary": "s", "diff": {"x": 1}, "affected_leads": 10,
-         "dry_run": {"ok": True}, "impact_score": 0.3, "rationale": "r"}
+    b = {
+        "proposal_id": kw.pop("pid", "p1"),
+        "workflow_id": wid,
+        "base_version": w.get_config(wid)["version"],
+        "proposed_config": cfg,
+        "change_summary": "s",
+        "diff": {"x": 1},
+        "affected_leads": 10,
+        "dry_run": {"ok": True},
+        "impact_score": 0.3,
+        "rationale": "r",
+    }
     b.update(kw)
     return b
 
@@ -50,13 +60,27 @@ def test_auto_apply_policy(world):
     cfg = copy.deepcopy(world.get_config("nw_renewal")["config"])
     cfg["allocations"]["default"]["voice"] = {"V2": 1}
     with pytest.raises(ApiError) as e:
-        world.auto_apply("nw_renewal", {"proposal_id": "a1", "base_version": 1, "proposed_config": cfg,
-                                        "rationale": "x"})
+        world.auto_apply(
+            "nw_renewal",
+            {
+                "proposal_id": "a1",
+                "base_version": 1,
+                "proposed_config": cfg,
+                "rationale": "x",
+            },
+        )
     assert e.value.status == 403
     cfg = copy.deepcopy(world.get_config("nw_renewal")["config"])
     cfg["allocations"]["default"]["caller_id"] = {"D1": 0.4, "D2": 0.4, "D3": 0.2}
-    r = world.auto_apply("nw_renewal", {"proposal_id": "a2", "base_version": 1, "proposed_config": cfg,
-                                        "rationale": "spread load"})
+    r = world.auto_apply(
+        "nw_renewal",
+        {
+            "proposal_id": "a2",
+            "base_version": 1,
+            "proposed_config": cfg,
+            "rationale": "spread load",
+        },
+    )
     assert r["changed_dims"] == ["caller_id"]
 
 
@@ -70,7 +94,9 @@ def test_hard_rules(world):
 
 def test_prompt_change_needs_evidence_and_credits(world):
     world.advance(600)
-    v = world.run_validation({"workflow_id": "nw_renewal", "prompt_version": "P3", "n": 400})
+    v = world.run_validation(
+        {"workflow_id": "nw_renewal", "prompt_version": "P3", "n": 400}
+    )
     assert 0 <= v["pass_rate"] <= 1 and world.credits == 196
     cfg = copy.deepcopy(world.get_config("nw_renewal")["config"])
     cfg["prompt_version"] = "P3"

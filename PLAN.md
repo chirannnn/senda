@@ -4,7 +4,7 @@
 
 Build a single-process controller that runs `./run.sh <SIM_URL>` to completion, consumes only the simulator HTTP contract, optimizes each workflow's declared primary KPI while protecting its separate guardrail, submits every controller-initiated customer-facing change through governance, and keeps a restart-safe audit trail. The mandatory delivery floor is unattended `public_01_dev` and `public_02_incidents`, C12 auditability, constraint compliance, and completed `SUBMISSION.md`. Other capabilities are scoped below.
 
-This is a proposed plan, not implementation authorization. Current status remains PLANNING. The user-approved infrastructure direction is Python 3.12 locally in `.venv`, PostgreSQL 18 in Docker for local development with a persistent named volume, SQLAlchemy async + asyncpg, and Alembic. If an assessment database is provided at execution, use it; otherwise use the configured local development PostgreSQL environment. Statistical operating point and optional capability scope remain unapproved until review. No implementation chunk has started.
+This reviewed plan is the implementation specification. Chunks 1 and 2 are complete; Chunk 3 has not started. The approved infrastructure direction is Python 3.12 locally in `.venv`, PostgreSQL 18 in Docker for local development with a persistent named volume, SQLAlchemy async + asyncpg, and Alembic. If an assessment database is provided at execution, use it; otherwise use the configured local development PostgreSQL environment. Statistical operating point and optional capability scope remain unapproved until review.
 
 ## 2. Repository findings and verified contract
 
@@ -21,20 +21,20 @@ Verified from `docs/SIMULATOR.md` and route definitions:
 - Validation accepts `n` 50–2000, costs ceil(n/100) credits; suggestion costs 3 credits. Validation measures safety/hallucination, not engagement. Credits can exhaust with 402.
 - Pickup = connected/dials. Engagement = engaged/connected. Business outcome = concluded leads/uploaded leads. Never blend. Each workflow declares primary and guardrail.
 - Config supports ordered cohorts (up to 20), allocations, prompt, hour weights, person-preferred hour. Schedule changes who gets called, not volume; omitted hours in a supplied table get zero. Cadence, capacity and call windows are business-owned. `next_campaign_only` locks cohorts/allocations for running campaigns; prompt and schedule still apply immediately.
-- Assignment allows Docker but does not require it; grading uses a 4-vCPU/8-GB Linux box. Repo has no controller, Dockerfile, Compose, database schema, migrations, or application package. `run.sh` currently invokes the deliberately naive example. Existing requirements: numpy, pyyaml, fastapi, uvicorn, httpx, pytest.
+- At initial plan review, the repository had no controller, database schema, migrations, or application package, and `run.sh` invoked the deliberately naive example. Chunks 1 and 2 have since added the controller runtime, durable store, and migrations; there is still no controller Docker image. Assignment allows Docker but does not require it; grading uses a 4-vCPU/8-GB Linux box. Existing requirements included numpy, pyyaml, fastapi, uvicorn, httpx, and pytest.
 - Assignment README explicitly allows any language and any storage, and does not specify a supplied database or a Python version. The existing dependency file has lower bounds but no Python-version declaration. No assessment database connection is described in the assignment materials or configured in the inspected environment.
 
 **UNVERIFIED:** whether an assessment database connection will be supplied at grading time; actual grader Python patch; exact response/error fields beyond docs; chunk retention/size bounds; and real HTTP throughput. API contract, not stakeholder recollection, is authoritative.
 
 ### Pre-implementation infrastructure selection
 
-The assessment does not require a database service, a specific Python version, or Docker; README permits any storage/language and says Docker is fine. Use an assessment-provided DB at grading only if one is actually supplied; the repository/environment reviewed so far has none. Local development is now prepared with Python 3.12.10 in `.venv`, Docker Engine 29.5.3 and Compose 5.1.4, and a PostgreSQL 18.6 container. `docker-compose.dev.yml` binds only to localhost port 5433 (host PostgreSQL already occupies 5432) and mounts named volume `formi-outcome-loop-pg18-devdata` at `/var/lib/postgresql`. Development credentials are stored outside the repository at `%LOCALAPPDATA%\FormiAgenticUniverse\postgres-dev.env`; do not copy them into source, logs, or reports. Async SQLAlchemy connectivity succeeded and a probe row survived container restart; the probe table was removed. `requirements.txt` includes SQLAlchemy's asyncio extra, Alembic and asyncpg. No PostgreSQL 16 or separate database installation is needed. Before Chunk 1, confirm any grader-provided DB and document the selected connection for that environment. The controller launcher must not require Docker unless grading availability is verified.
+The assessment does not require a database service, a specific Python version, or Docker; README permits any storage/language and says Docker is fine. Use an assessment-provided DB at grading only if one is supplied. Local development was prepared with Python 3.12.10 in `.venv`, Docker Engine 29.5.3 and Compose 5.1.4, and a PostgreSQL 18.6 container. `docker-compose.dev.yml` binds only to localhost port 5433 (host PostgreSQL occupies 5432) and mounts named volume `formi-outcome-loop-pg18-devdata` at `/var/lib/postgresql`. Development credentials are stored outside the repository at `%LOCALAPPDATA%\FormiAgenticUniverse\postgres-dev.env`; do not copy them into source, logs, or reports. Async SQLAlchemy connectivity succeeded and a probe row survived container restart; the probe table was removed. `requirements.txt` includes SQLAlchemy's asyncio extra, Alembic and asyncpg. No PostgreSQL 16 or separate database installation is needed. During Chunk 2, Docker was stopped and PostgreSQL integration checks used a temporary PostgreSQL 18 test instance. The controller launcher does not require Docker.
 
 ## 3. Architecture and technology review
 
 ### Runtime
 
-Use a single Python 3.12 asyncio process with `httpx`, in a modular monolith. The assignment has no Python version requirement; Python 3.12 syntax compatibility was checked, but the interpreter itself is absent from this machine and must be installed before implementation if this target is retained. Async HTTP suits independent bounded reads without adding workers or broker. Start with one writer/decision loop and bounded concurrency only for independent reads. Avoid FastAPI/Uvicorn in the controller: no controller server is required; CLI, structured logs and reports suffice. `pytest` is already listed. Pydantic 2 is optional; add only if strict parsing reduces complexity over typed parsing/dataclasses. Add numpy only if selected statistical computation needs it.
+Use a single Python 3.12 asyncio process with `httpx`, in a modular monolith. The assignment has no Python version requirement; Python 3.12.10 is installed in `.venv`. Async HTTP suits independent bounded reads without adding workers or broker. Start with one writer/decision loop and bounded concurrency only for independent reads. Avoid FastAPI/Uvicorn in the controller: no controller server is required; CLI, structured logs and reports suffice. `pytest` is already listed. Pydantic 2 is optional; add only if strict parsing reduces complexity over typed parsing/dataclasses. Add numpy only if selected statistical computation needs it.
 
 ### Durable store decision — PostgreSQL
 
@@ -135,11 +135,11 @@ Persist incident/proposal states so restart recovers every phase. Never infer su
 
 ## 11. Incremental implementation chunks
 
-No chunk has started. Each ends in a working, testable repository. Paths are planned new files unless existing files named. Never modify `sim/`.
+Chunks 1 and 2 are complete; Chunk 3 has not started. Each remaining chunk must end in a working, testable repository. Paths are planned new files unless existing files are named. Never modify `sim/`.
 
 ### Chunk 1 — Runtime and launcher
 - **Objective/why:** replace naive launch with unattended `run.sh <SIM_URL>` and clean lifecycle.
-- **Files:** create `controller/__init__.py`, `controller/__main__.py`, `controller/config.py`, `controller/client.py`; modify `run.sh`, `README.md`, `requirements.txt` only for verified dependencies.
+- **Files:** create `controller/__init__.py`, `controller/__main__.py`, `controller/config/settings.py`, `controller/clients/simulator.py`, `controller/runtime/lifecycle.py`, `controller/observability/logging.py`; modify `run.sh` and `README.md` only for verified dependencies.
 - **Dependencies:** approved runtime/storage; simulator contract.
 - **Steps:** parse config; pooled client/timeouts/errors; health/read-only metadata; finish-detecting skeleton; signals.
 - **Unit:** config, URL, error classification, retry bounds. **Integration:** launcher against local simulator; read health/workflow/state. **Failure:** startup outage and SIGTERM.
@@ -150,12 +150,12 @@ No chunk has started. Each ends in a working, testable repository. Paths are pla
 
 ### Chunk 2 — Durable schema and audit
 - **Objective/why:** persist raw events, checkpoints, outbox and explanation before behavior.
-- **Files:** create `controller/store.py`, `controller/schema.py` or chosen ORM/migrations, `controller/audit.py`, `tests/controller/`.
+- **Files:** implemented under `controller/storage/` (`store.py`, `models.py`, `audit.py`) with root `alembic.ini` and `migrations/`; unit tests under `tests/unit/` and PostgreSQL integration tests under `tests/integration/storage/`.
 - **Dependencies:** Chunk 1; selected PostgreSQL connection and durable data path verified.
 - **Steps:** versioned schema; run/workflow; unique event; chunk checkpoints; audit/outbox; bounded transactions.
 - **Unit:** reopen, uniqueness, rollback, query. **Integration:** clean init/restart/migration idempotence. **Failure:** interrupted transaction never advances checkpoint.
 - **Acceptance:** durable reopen, unique IDs, rollback proven, state path documented.
-- **Expected:** `pytest -q tests/controller/test_store.py` passes.
+- **Expected:** `pytest -q tests/integration/storage/test_store.py` passes.
 - **Commit:** `feat: add durable event and audit store`.
 - **PROGRESS:** schema, store, restart/rollback evidence.
 
@@ -166,7 +166,7 @@ No chunk has started. Each ends in a working, testable repository. Paths are pla
 - **Steps:** list/fetch/stream NDJSON; validate ordering; transactional dedupe/dispatch; contiguous checkpoint; persist advance descriptors; restart relist.
 - **Unit:** parser, duplicates, malformed/order/checkpoint. **Integration:** compare local API-listed chunks. **Failure:** mid-chunk interruption, GET/DB outage, replay exactly once locally.
 - **Acceptance:** history/live labels preserved; no checkpoint over incomplete chunk; bounded memory.
-- **Expected:** `pytest -q tests/controller/test_ingest.py` reports counts/checkpoint.
+- **Expected:** unit and integration tests under `tests/unit/` and `tests/integration/ingestion/` report counts/checkpoint.
 - **Commit:** `feat: ingest simulator history and live chunks safely`.
 - **PROGRESS:** counts, restart position, injected failures, throughput.
 
@@ -177,7 +177,7 @@ No chunk has started. Each ends in a working, testable repository. Paths are pla
 - **Steps:** join lead/call; distinct KPIs; exposure attribution; canonical versioned cohort; audit query by workflow/time/config.
 - **Unit:** KPI denominators/zero-connected; returning people; ordering; history/live dedupe; same canonical cohort ID/predicate/version used by attribution, experiment inputs and audit query. **Integration:** independently count fetched public events. **Failure:** missing/out-of-order lead remains explicit, no invented feature.
 - **Acceptance:** separate KPI numerator/denominator; actual arms only; query includes actor, reason, approval, outcome.
-- **Expected:** `pytest -q tests/controller/test_metrics.py` and sample audit query.
+- **Expected:** `pytest -q tests/unit/test_metrics.py` and sample audit query.
 - **Commit:** `feat: derive auditable workflow metrics from events`.
 - **PROGRESS:** definitions, joins, query evidence.
 
@@ -188,7 +188,7 @@ No chunk has started. Each ends in a working, testable repository. Paths are pla
 - **Steps:** payload validation/outbox; submit/reconcile duplicate/timeouts; poll/state machine; stale reevaluation; apply intent/config-history reconciliation; policy allowlist only if approved.
 - **Unit:** transitions, stable IDs/hash, error handling. **Integration:** pending/approved/rejected/expired/applied/lapsed through documented API. **Failure:** kill after submit/approval/before apply/remote apply before local commit.
 - **Acceptance:** no bypass; stale never blindly retried; ambiguity halts workflow; exact diff/evidence audited.
-- **Expected:** `pytest -q tests/controller/test_governance.py` passes transitions/recovery.
+- **Expected:** `pytest -q tests/unit/test_governance.py` passes transitions/recovery.
 - **Commit:** `feat: implement governed proposal lifecycle and reconciliation`.
 - **PROGRESS:** endpoint results, lifecycle coverage, retry uncertainty.
 

@@ -25,7 +25,7 @@ from sqlalchemy.ext.asyncio import (
 )
 
 from controller.errors import ConfigurationError
-from controller.schema import (
+from controller.storage.models import (
     ControllerRun,
     OutboxOperation,
     ProcessingCheckpoint,
@@ -116,7 +116,7 @@ class DatabaseStore:
     async def migrate(self) -> None:
         """Apply checked-in Alembic revisions through the owned async connection."""
         self._ensure_open()
-        alembic_ini = Path(__file__).resolve().parent.parent / "alembic.ini"
+        alembic_ini = Path(__file__).resolve().parents[2] / "alembic.ini"
         config = Config(str(alembic_ini))
         async with self._engine.begin() as connection:
             await connection.run_sync(self._run_upgrade, config)

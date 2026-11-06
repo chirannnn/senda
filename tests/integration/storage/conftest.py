@@ -3,7 +3,7 @@ import os
 import pytest
 from sqlalchemy import delete
 
-from controller.schema import (
+from controller.storage.models import (
     AuditRecord,
     ControllerRun,
     OutboxOperation,
@@ -11,7 +11,7 @@ from controller.schema import (
     SimulatorEvent,
     WorkflowReference,
 )
-from controller.store import DatabaseStore
+from controller.storage.store import DatabaseStore
 
 
 @pytest.fixture

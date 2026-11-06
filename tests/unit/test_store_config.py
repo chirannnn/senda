@@ -1,7 +1,7 @@
 import pytest
 
 from controller.errors import ConfigurationError
-from controller.store import DatabaseStore
+from controller.storage.store import DatabaseStore
 
 
 @pytest.mark.anyio

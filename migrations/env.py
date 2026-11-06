@@ -11,7 +11,7 @@ from sqlalchemy import pool
 from sqlalchemy.engine import Connection, make_url
 from sqlalchemy.ext.asyncio import create_async_engine
 
-from controller.schema import Base
+from controller.storage.models import Base
 
 config = context.config
 if config.config_file_name is not None:

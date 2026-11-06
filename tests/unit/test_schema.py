@@ -1,6 +1,6 @@
 from sqlalchemy import JSON
 
-from controller.schema import (
+from controller.storage.models import (
     AuditRecord,
     Base,
     OutboxOperation,

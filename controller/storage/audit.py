@@ -8,8 +8,8 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from controller.schema import AuditRecord
-from controller.store import DatabaseStore
+from controller.storage.models import AuditRecord
+from controller.storage.store import DatabaseStore
 
 
 @dataclass(frozen=True, slots=True)
