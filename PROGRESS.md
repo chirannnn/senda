@@ -47,14 +47,16 @@
 | Subtask | Status | Validation | Commit |
 |---|---|---|---|
 | 1. Versioned database schema and initial Alembic revision | COMPLETE | 4 schema metadata tests passed; Ruff and compile checks passed; `alembic history` lists initial revision | `aab9708 feat(storage): add versioned durable schema` |
-| 2. Async database store and configuration | COMPLETE | 6 configuration/lifecycle unit tests passed; Ruff and compile checks passed | `feat(storage): add async database store` |
-| 3. Event uniqueness and atomic persistence primitives | NOT STARTED | — | — |
+| 2. Async database store and configuration | COMPLETE | 6 configuration/lifecycle unit tests passed; Ruff and compile checks passed | `2443889 feat(storage): add async database store` |
+| 3. Event uniqueness and atomic persistence primitives | COMPLETE | PostgreSQL insert/read, duplicate no-op, and conflicting replay tests passed; 12 schema/store tests passed | `feat(storage): persist raw events idempotently` |
 | 4. Checkpoint, audit and outbox operations | NOT STARTED | — | — |
 | 5. PostgreSQL failure/restart and migration verification | NOT STARTED | — | — |
 
-Subtask 1 defines controller-owned run/workflow references, raw event envelopes, nullable ordered-descriptor checkpoints, append-only audit records, and deduplicated outbox operations. Event payloads remain JSON without inferred simulator fields. Checkpoint positions have no numeric consecutiveness constraint. The initial Alembic migration is present but has not yet been applied to a database.
+Subtask 1 defines controller-owned run/workflow references, raw event envelopes, nullable ordered-descriptor checkpoints, append-only audit records, and deduplicated outbox operations. Event payloads remain JSON without inferred simulator fields. Checkpoint positions have no numeric consecutiveness constraint. The initial Alembic migration is present and has been applied to the isolated PostgreSQL test database; explicit repeat-migration verification remains in subtask 5.
 
-Subtask 2 adds `DatabaseStore`, which reads `CONTROLLER_DATABASE_URL` separately from simulator settings, accepts only `postgresql+asyncpg`, uses a bounded pre-ping pool with SQL parameter hiding, exposes explicit transaction scopes, verifies connectivity, applies Alembic revisions, and disposes connections on close. Configuration and no-database lifecycle tests pass. Live migration/connectivity verification remains pending because Docker Engine is stopped and the host PostgreSQL service does not accept the external Compose credentials.
+Subtask 2 adds `DatabaseStore`, which reads `CONTROLLER_DATABASE_URL` separately from simulator settings, accepts only `postgresql+asyncpg`, uses a bounded pre-ping pool with SQL parameter hiding, exposes explicit transaction scopes, verifies connectivity, applies Alembic revisions, and disposes connections on close. Configuration and lifecycle tests pass. The test database was verified using an isolated temporary PostgreSQL instance; the configured Compose database remains unavailable because Docker Engine is stopped, and the host PostgreSQL service rejects the external Compose credentials.
+
+Subtask 3 adds `EventRecord`, transactional PostgreSQL insert-on-conflict handling, and a read-by-ID operation. The method returns only IDs actually inserted so future derived effects can be limited to new events; a repeated ID with different payload, kind, or chunk raises an error. Integration tests passed against a temporary loopback-only PostgreSQL 18 database initialized outside the repository. Docker and the host database were not modified.
 
 The Chunk 1 runtime is a foundation only. It does not yet persist events or advance intents and does not make optimization or governance decisions. It halts on ambiguous advance outcomes rather than issuing a duplicate POST; durable reconciliation is required in the later persistence/recovery chunks. Public simulator scenarios were not run as part of Chunk 1.
 
