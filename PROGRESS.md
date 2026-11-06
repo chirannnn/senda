@@ -12,7 +12,7 @@
 |---|---|---|---|
 | 1 | Runtime and launcher | COMPLETE | `cfc28d2`, `730cf26`, `71bdd8a` (and earlier foundation/config commits listed below) |
 | 2 | Durable schema and audit | COMPLETE | `aab9708`, `2443889`, `31af0ea`, `a3d7a6b`, `e88ed27` |
-| 3 | Simulator chunk ingestion | NOT STARTED | — |
+| 3 | Simulator chunk ingestion | IN PROGRESS | — |
 | 4 | History, KPI facts, audit query | NOT STARTED | — |
 | 5 | Governance lifecycle | NOT STARTED | — |
 | 6 | Statistical comparison | NOT STARTED | — |
@@ -20,6 +20,17 @@
 | 8 | Crash recovery demonstration | NOT STARTED | — |
 | 9 | Load and observability | NOT STARTED | — |
 | 10 | Submission and final grading | NOT STARTED | — |
+
+## Chunk 3 subtask progress
+
+| Subtask | Status | Validation | Commit |
+|---|---|---|---|
+| 1. Ingestion foundation | COMPLETE | `.venv/Scripts/python.exe -m pytest -q tests/unit/ingestion/` — 13 passed; Ruff check/format and `git diff --check` passed | pending |
+| 2. Historical ingestion | NOT STARTED | — | — |
+| 3. Transactional persistence | NOT STARTED | — | — |
+| 4. Live ingestion | NOT STARTED | — | — |
+| 5. Crash recovery | NOT STARTED | — | — |
+| 6. Hardening | NOT STARTED | — | — |
 
 ## Environment setup results (2026-11-06)
 
@@ -150,4 +161,4 @@ Do not rewrite prior history.
 
 ## Next action
 
-Chunk 2 and the repository structure refactor are complete. Next: Chunk 3 — Chunk ingestion. Chunk 3 has not started.
+Chunk 2 and the repository structure refactor are complete. Chunk 3 subtask 1 (ingestion foundation) is complete; subtask 2 (historical ingestion) is next. No later Chunk 3 subtask has started.
