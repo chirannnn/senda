@@ -190,6 +190,12 @@ class DatabaseStore:
         async with self._sessions() as session:
             return await session.get(SimulatorEvent, event_id)
 
+    async def get_latest_event_id(self) -> int | None:
+        """Read the highest persisted event ID without assuming contiguous IDs."""
+        self._ensure_open()
+        async with self._sessions() as session:
+            return await session.scalar(select(func.max(SimulatorEvent.event_id)))
+
     async def create_run(
         self, session: AsyncSession, details: dict[str, object] | None = None
     ) -> UUID:
@@ -370,6 +376,25 @@ class DatabaseStore:
                 select(OutboxOperation).where(OutboxOperation.dedupe_key == dedupe_key)
             )
 
+    async def list_outbox_operations(
+        self,
+        operation_type: str,
+        *,
+        statuses: tuple[str, ...] | None = None,
+    ) -> list[OutboxOperation]:
+        """Read durable operations in creation order for restart reconciliation."""
+        self._ensure_open()
+        async with self._sessions() as session:
+            statement = select(OutboxOperation).where(
+                OutboxOperation.operation_type == operation_type
+            )
+            if statuses is not None:
+                statement = statement.where(OutboxOperation.status.in_(statuses))
+            statement = statement.order_by(
+                OutboxOperation.created_at, OutboxOperation.id
+            )
+            return list((await session.scalars(statement)).all())
+
     async def update_outbox_status(
         self,
         session: AsyncSession,
@@ -377,6 +402,7 @@ class DatabaseStore:
         status: str,
         *,
         increment_attempts: bool = False,
+        payload: dict[str, object] | None = None,
     ) -> OutboxOperation | None:
         """Record local reconciliation state; performs no external operation."""
         self.require_transaction(session)
@@ -384,6 +410,8 @@ class DatabaseStore:
         if operation is None:
             return None
         operation.status = status
+        if payload is not None:
+            operation.payload = payload
         operation.updated_at = datetime.now(UTC)
         if increment_attempts:
             operation.attempts += 1

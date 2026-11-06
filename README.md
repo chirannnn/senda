@@ -95,9 +95,8 @@ workflows and state over HTTP, then advances until the simulator reports complet
 stops after any in-flight HTTP operation finishes. JSON logs go to stderr; the simulator URL and credentials
 are not logged. An ambiguous advance response exits safely without issuing another advance.
 
-This runtime foundation does not yet persist events or advance intents and does not make optimization or
-governance decisions. Those are implemented in later plan chunks; do not treat Chunk 1 alone as the completed
-assessment controller.
+The runtime now persists simulator events and advance intents. It does not yet calculate KPIs or make
+optimization, experimentation, or governance decisions; those remain later plan chunks.
 
 ### Durable storage (Chunk 2)
 
@@ -106,12 +105,22 @@ The async store in `controller/storage/` uses `CONTROLLER_DATABASE_URL` in SQLAl
 the current process environment using the local development credentials stored outside the repository or a
 database connection explicitly supplied for the assessment. Do not put the URL in source, `.env` files under
 version control, command output, or logs. `DatabaseStore.initialize()` checks connectivity and
-`DatabaseStore.migrate()` applies the checked-in Alembic revisions; migrations do not run automatically from
-the Chunk 1 launcher. For manual migration work, set the environment variable in the shell and run
+`DatabaseStore.migrate()` applies the checked-in Alembic revisions. The launcher requires this setting, checks
+readiness, and applies migrations before simulator ingestion. For manual migration work, set the environment variable in the shell and run
 `python -m alembic -c alembic.ini upgrade head` with the project virtual environment's Python on Windows or
-Linux. Storage is not yet wired into controller execution; Chunk 3 will connect it to event
-ingestion. Store integration tests require `CONTROLLER_TEST_DATABASE_URL` to point at a disposable PostgreSQL
-database.
+Linux. Ensure the selected PostgreSQL service is running before launch; Docker is optional and is not started by
+the launcher. Store and ingestion integration tests require `CONTROLLER_TEST_DATABASE_URL` to point at a
+disposable PostgreSQL database.
+
+### Event ingestion (Chunk 3)
+
+At startup, the controller lists history and live chunk descriptors over HTTP, merges them by the API's global
+chunk order, fetches NDJSON through the HTTP client, and stores validated events with the descriptor checkpoint
+in one transaction. Memory use is bounded with a 1 MiB in-memory download spool and 500-row database batches;
+larger response bodies spill to operating-system temporary storage. Before each `/sim/advance` POST, it commits
+an advance intent to the outbox. The POST is sent once, its returned descriptors are persisted, then those
+chunks are ingested. If the POST outcome is ambiguous, the intent remains available for reconciliation and the
+controller stops without blindly retrying.
 
 ### Repository layout
 

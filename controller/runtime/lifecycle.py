@@ -13,6 +13,9 @@ from typing import Any, Protocol
 
 from controller.config import Settings
 from controller.errors import AmbiguousPostError, SimulatorError, SimulatorHTTPError
+from controller.ingestion.runner import advance_and_ingest
+from controller.ingestion.service import EventIngestionService
+from controller.storage.store import DatabaseStore
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +44,7 @@ async def run_controller(
     settings: Settings,
     simulator: SimulatorAPI,
     stop_event: asyncio.Event,
+    store: DatabaseStore | None = None,
 ) -> RuntimeOutcome:
     """Check readiness, then advance until finished or asked to stop."""
     await simulator.get_health()
@@ -50,10 +54,29 @@ async def run_controller(
         "simulator ready",
         extra={"event": "startup_ready", "workflow_count": len(workflows)},
     )
+    ingestion = EventIngestionService(simulator) if store is not None else None
+    if store is not None and ingestion is not None:
+        await ingestion.ingest_available_chunks(store)
     if _is_finished(state):
         return RuntimeOutcome(completed=True, stopped=False)
 
     while not stop_event.is_set():
+        if store is not None:
+            result = await advance_and_ingest(
+                simulator, store, settings.advance_minutes, service=ingestion
+            )
+            if result.finished:
+                return RuntimeOutcome(completed=True, stopped=False)
+            logger.info(
+                "simulator advanced and chunks committed",
+                extra={
+                    "event": "advance_ingested",
+                    "simulated_time": result.simulated_time,
+                    "chunks_committed": result.chunks_committed,
+                    "events_inserted": result.events_inserted,
+                },
+            )
+            continue
         try:
             result = await simulator.advance(settings.advance_minutes)
         except AmbiguousPostError:

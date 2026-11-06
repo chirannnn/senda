@@ -9,11 +9,14 @@ import signal
 import sys
 from collections.abc import Sequence
 
+from sqlalchemy.exc import SQLAlchemyError
+
 from controller.clients import SimulatorClient
 from controller.config import Settings
 from controller.errors import ControllerError
 from controller.observability import configure_logging
 from controller.runtime import run_controller
+from controller.storage.store import DatabaseStore
 
 logger = logging.getLogger(__name__)
 
@@ -42,10 +45,17 @@ async def _run(settings: Settings) -> int:
     previous_handlers = {
         signum: signal.signal(signum, request_stop) for signum in watched_signals
     }
+    store = DatabaseStore.from_environment()
     try:
+        await store.initialize()
+        await store.migrate()
+        # Alembic's fileConfig configures the root logger; reapply the
+        # controller's structured format before runtime/network operations.
+        configure_logging(settings.log_level)
         async with SimulatorClient(settings) as simulator:
-            outcome = await run_controller(settings, simulator, stop_event)
+            outcome = await run_controller(settings, simulator, stop_event, store)
     finally:
+        await store.close()
         for signum, handler in previous_handlers.items():
             signal.signal(signum, handler)
 
@@ -73,6 +83,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 1
     except OSError as exc:
         logger.error("controller could not initialize runtime resources: %s", exc)
+        return 1
+    except SQLAlchemyError as exc:
+        logger.error(
+            "controller database operation failed (%s); check database availability and configuration",
+            type(exc).__name__,
+        )
         return 1
 
 

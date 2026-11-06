@@ -88,6 +88,41 @@ class EventIngestionService:
         descriptors = sorted(history + live, key=lambda item: item.chunk)
         return parse_descriptors([item.metadata for item in descriptors], after=after)
 
+    async def ingest_descriptors(
+        self,
+        store: DatabaseStore,
+        descriptors: list[ChunkDescriptor],
+        *,
+        checkpoint_key: str = "simulator",
+        batch_size: int = 500,
+    ) -> tuple[int, int]:
+        """Commit the supplied complete ordered descriptor sequence in order."""
+        checkpoint = await store.get_checkpoint(checkpoint_key)
+        after = -1 if checkpoint is None else checkpoint
+        descriptors = parse_descriptors(
+            [item.metadata for item in descriptors], after=after
+        )
+        event_count = 0
+        committed_chunks = 0
+        previous_last_event_id = await store.get_latest_event_id()
+        for descriptor in descriptors:
+            if (
+                previous_last_event_id is not None
+                and descriptor.first_event_id <= previous_last_event_id
+            ):
+                raise EventValidationError(
+                    "event ID ranges must increase across API-ordered chunks"
+                )
+            previous_last_event_id = descriptor.last_event_id
+            event_count += await self.ingest_descriptor(
+                store,
+                descriptor,
+                checkpoint_key=checkpoint_key,
+                batch_size=batch_size,
+            )
+            committed_chunks += 1
+        return committed_chunks, event_count
+
     async def ingest_available_chunks(
         self,
         store: DatabaseStore,
@@ -99,24 +134,9 @@ class EventIngestionService:
         checkpoint = await store.get_checkpoint(checkpoint_key)
         after = -1 if checkpoint is None else checkpoint
         descriptors = await self.list_available_chunks(after=after)
-        event_count = 0
-        committed_chunks = 0
-        previous_last_event_id: int | None = None
-        for descriptor in descriptors:
-            if (
-                previous_last_event_id is not None
-                and descriptor.first_event_id <= previous_last_event_id
-            ):
-                raise EventValidationError(
-                    "event ID ranges must increase across API-ordered chunks"
-                )
-            previous_last_event_id = descriptor.last_event_id
-
-            event_count += await self.ingest_descriptor(
-                store,
-                descriptor,
-                checkpoint_key=checkpoint_key,
-                batch_size=batch_size,
-            )
-            committed_chunks += 1
-        return committed_chunks, event_count
+        return await self.ingest_descriptors(
+            store,
+            descriptors,
+            checkpoint_key=checkpoint_key,
+            batch_size=batch_size,
+        )

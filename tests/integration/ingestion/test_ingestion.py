@@ -4,6 +4,7 @@ import pytest
 from controller.clients.simulator import SimulatorClient
 from controller.config import Settings
 from controller.ingestion.events import EventValidationError
+from controller.ingestion.runner import ADVANCE_OPERATION, advance_and_ingest
 from controller.ingestion.service import EventIngestionService
 
 
@@ -159,3 +160,67 @@ async def test_malformed_chunk_rolls_back_batches_and_remains_replayable(
     assert await postgres_store.get_checkpoint("simulator") == 4
     assert await postgres_store.get_event(31) is not None
     assert await postgres_store.get_event(40) is not None
+
+
+@pytest.mark.anyio
+async def test_live_advance_persists_intent_then_ingests_returned_chunks(
+    postgres_store,
+):
+    descriptor = _descriptor(7, "events", 101, 105)
+    requests = []
+
+    def handler(request):
+        requests.append((request.method, request.url.path))
+        if request.url.path == "/events/chunks":
+            return httpx.Response(200, json=[])
+        if request.url.path == "/sim/state":
+            return httpx.Response(
+                200,
+                json={
+                    "sim_minute": 0,
+                    "ts": "D0 00:00",
+                    "finished": False,
+                    "chunks": 0,
+                    "last_event_id": 0,
+                },
+            )
+        if request.url.path == "/sim/advance":
+            return httpx.Response(
+                200,
+                json={
+                    "sim_minute": 15,
+                    "ts": "D0 00:15",
+                    "finished": True,
+                    "new_chunks": [descriptor],
+                },
+            )
+        return httpx.Response(
+            200,
+            content=_body(
+                {"event_id": 101, "type": "call"},
+                {"event_id": 105, "type": "call"},
+            ),
+        )
+
+    client = SimulatorClient(
+        Settings("http://simulator.test"), transport=httpx.MockTransport(handler)
+    )
+    async with client:
+        result = await advance_and_ingest(client, postgres_store, 15)
+
+    assert result.finished
+    assert result.simulated_time == "D0 00:15"
+    assert result.events_inserted == 2
+    assert await postgres_store.get_checkpoint("simulator") == 7
+    assert await postgres_store.get_event(101) is not None
+    assert await postgres_store.get_event(105) is not None
+    assert requests.index(("GET", "/sim/state")) < requests.index(
+        ("POST", "/sim/advance")
+    )
+    assert requests.count(("POST", "/sim/advance")) == 1
+    intents = await postgres_store.list_outbox_operations(ADVANCE_OPERATION)
+    assert len(intents) == 1
+    assert intents[0].status == "succeeded"
+    assert intents[0].attempts == 1
+    assert intents[0].payload["before"]["sim_minute"] == 0
+    assert intents[0].payload["response"]["new_chunks"] == [descriptor]
