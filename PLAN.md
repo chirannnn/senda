@@ -135,7 +135,7 @@ Persist incident/proposal states so restart recovers every phase. Never infer su
 
 ## 11. Incremental implementation chunks
 
-Chunks 1 and 2 are complete; Chunk 3 has not started. Each remaining chunk must end in a working, testable repository. Paths are planned new files unless existing files are named. Never modify `sim/`.
+Chunks 1–3 are complete; Chunk 4 has not started. Each remaining chunk must end in a working, testable repository. Paths are planned new files unless existing files are named. Never modify `sim/`.
 
 ### Chunk 1 — Runtime and launcher
 - **Objective/why:** replace naive launch with unattended `run.sh <SIM_URL>` and clean lifecycle.
@@ -161,14 +161,14 @@ Chunks 1 and 2 are complete; Chunk 3 has not started. Each remaining chunk must 
 
 ### Chunk 3 — Chunk ingestion
 - **Objective/why:** ingest history/live reliably before decisions.
-- **Files:** create `controller/ingest.py`, `controller/events.py`; modify client/store; ingestion tests.
+- **Files implemented:** `controller/ingestion/{events.py,parser.py,service.py,runner.py}`; updated `controller/clients/simulator.py`, `controller/runtime/lifecycle.py`, `controller/storage/store.py`, `controller/__main__.py`, Alembic logging setup, README and PROGRESS; tests under `tests/unit/ingestion/` and `tests/integration/ingestion/`.
 - **Dependencies:** Chunks 1–2.
-- **Steps:** list/fetch/stream NDJSON; validate ordering; transactional dedupe/dispatch; contiguous checkpoint; persist advance descriptors; restart relist.
-- **Unit:** parser, duplicates, malformed/order/checkpoint. **Integration:** compare local API-listed chunks. **Failure:** mid-chunk interruption, GET/DB outage, replay exactly once locally.
-- **Acceptance:** history/live labels preserved; no checkpoint over incomplete chunk; bounded memory.
-- **Expected:** unit and integration tests under `tests/unit/` and `tests/integration/ingestion/` report counts/checkpoint.
-- **Commit:** `feat: ingest simulator history and live chunks safely`.
-- **PROGRESS:** counts, restart position, injected failures, throughput.
+- **Steps completed:** list history/live descriptors via HTTP; spool streamed NDJSON with bounded RAM; validate descriptor metadata, event shape and strictly increasing (not consecutive) event IDs; batch event inserts and checkpoint atomically per ordered descriptor; persist advance intent and returned descriptors; reconcile restarts through state and ordered listings; allow one POST retry only after unchanged state and no new descriptors.
+- **Unit:** parser, malformed/out-of-order events, duplicate IDs, descriptor ordering, interrupted stream, database outage before POST. **Integration:** history/live persistence, replay, atomic rollback, runtime loop, advance intent and restart reconciliation. **Failure:** download interruption, malformed/truncated chunk, database write failure, API outage, timeout-after-apply, no-progress and repeated ambiguity.
+- **Acceptance:** history/live labels preserved; incomplete chunks never advance checkpoints; bounded-memory stream and 500-event DB batches; duplicate events do not create duplicate local effects; no exactly-once claim.
+- **Expected:** `.venv` pytest unit/integration suites pass. A generated 30,000-event PostgreSQL test measured throughput/memory; public load scenario remains unrun.
+- **Commits:** `d921490`, `b6b88f6`, `6bdce40`, `f975203`, `09bf0b6`; final hardening commit follows verification.
+- **PROGRESS:** actual test counts, checkpoint/replay and recovery evidence, synthetic throughput/memory, unrun public scenarios.
 
 ### Chunk 4 — History, KPI and audit query
 - **Objective/why:** correct denominators and explainability.

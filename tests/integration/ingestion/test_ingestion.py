@@ -1,7 +1,12 @@
+import asyncio
+import json
 import os
+import time
+import tracemalloc
 
 import httpx
 import pytest
+from sqlalchemy.exc import SQLAlchemyError
 
 from controller.clients.simulator import SimulatorClient
 from controller.config import Settings
@@ -9,10 +14,12 @@ from controller.errors import AmbiguousPostError, SimulatorError
 from controller.ingestion.events import EventValidationError
 from controller.ingestion.runner import (
     ADVANCE_OPERATION,
+    AdvanceReconciliationError,
     advance_and_ingest,
     reconcile_pending_advances,
 )
 from controller.ingestion.service import EventIngestionService
+from controller.runtime.lifecycle import run_controller
 from controller.storage.store import DatabaseStore
 
 
@@ -235,6 +242,94 @@ async def test_live_advance_persists_intent_then_ingests_returned_chunks(
 
 
 @pytest.mark.anyio
+async def test_runtime_bootstraps_history_then_finishes_after_live_ingestion(
+    postgres_store,
+):
+    history = _descriptor(0, "history", 1, 3)
+    live = _descriptor(4, "events", 9, 11)
+    state = {
+        "sim_minute": 0,
+        "ts": "D0 00:00",
+        "finished": False,
+        "chunks": 1,
+        "last_event_id": 3,
+    }
+    requests = []
+
+    def handler(request):
+        requests.append((request.method, request.url.path))
+        if request.url.path == "/health":
+            return httpx.Response(200, json={"ok": True})
+        if request.url.path == "/workflows":
+            return httpx.Response(200, json=[])
+        if request.url.path == "/sim/state":
+            return httpx.Response(200, json=state)
+        if request.url.path == "/events/chunks":
+            kind = request.url.params["kind"]
+            after = int(request.url.params["after"])
+            if kind == "history":
+                return httpx.Response(
+                    200, json=[history] if history["chunk"] > after else []
+                )
+            return httpx.Response(
+                200, json=[live] if state["finished"] and live["chunk"] > after else []
+            )
+        if request.url.path == "/events/chunks/0":
+            return httpx.Response(
+                200,
+                content=_body(
+                    {"event_id": 1, "type": "campaign_created"},
+                    {"event_id": 3, "type": "lead"},
+                ),
+            )
+        if request.url.path == "/events/chunks/4":
+            return httpx.Response(
+                200,
+                content=_body(
+                    {"event_id": 9, "type": "call"},
+                    {"event_id": 11, "type": "call"},
+                ),
+            )
+        if request.url.path == "/sim/advance":
+            state.update(
+                sim_minute=15,
+                ts="D0 00:15",
+                finished=True,
+                chunks=2,
+                last_event_id=11,
+            )
+            return httpx.Response(
+                200,
+                json={
+                    "sim_minute": 15,
+                    "ts": "D0 00:15",
+                    "finished": True,
+                    "new_chunks": [live],
+                },
+            )
+        raise AssertionError(
+            f"unexpected HTTP request {request.method} {request.url.path}"
+        )
+
+    client = SimulatorClient(
+        Settings("http://simulator.test"), transport=httpx.MockTransport(handler)
+    )
+    async with client:
+        outcome = await run_controller(
+            Settings("http://simulator.test"),
+            client,
+            asyncio.Event(),
+            postgres_store,
+        )
+
+    assert outcome.completed and not outcome.stopped
+    assert await postgres_store.get_checkpoint("simulator") == 4
+    stored = [await postgres_store.get_event(event_id) for event_id in (1, 3, 9, 11)]
+    assert all(stored)
+    assert requests.count(("POST", "/sim/advance")) == 1
+
+
+@pytest.mark.anyio
 async def test_restart_reconciles_advance_that_applied_before_response_was_lost(
     postgres_store,
 ):
@@ -438,3 +533,136 @@ async def test_unavailable_reconciliation_get_never_retries_advance(postgres_sto
         ADVANCE_OPERATION, statuses=("in_progress",)
     )
     assert len(unresolved) == 1
+
+
+@pytest.mark.anyio
+async def test_repeated_no_progress_ambiguity_is_bounded(postgres_store):
+    state = {
+        "sim_minute": 0,
+        "ts": "D0 00:00",
+        "finished": False,
+        "chunks": 0,
+        "last_event_id": 0,
+    }
+    post_count = 0
+
+    def handler(request):
+        nonlocal post_count
+        if request.url.path == "/events/chunks":
+            return httpx.Response(200, json=[])
+        if request.url.path == "/sim/state":
+            return httpx.Response(200, json=state)
+        if request.url.path == "/sim/advance":
+            post_count += 1
+            raise httpx.ReadTimeout("response unavailable", request=request)
+
+    client = SimulatorClient(
+        Settings("http://simulator.test"), transport=httpx.MockTransport(handler)
+    )
+    async with client:
+        with pytest.raises(AmbiguousPostError):
+            await advance_and_ingest(client, postgres_store, 15)
+        with pytest.raises(AmbiguousPostError):
+            await reconcile_pending_advances(client, postgres_store)
+        with pytest.raises(AdvanceReconciliationError, match="retry limit"):
+            await reconcile_pending_advances(client, postgres_store)
+
+    assert post_count == 2
+    intents = await postgres_store.list_outbox_operations(ADVANCE_OPERATION)
+    assert len(intents) == 1
+    assert intents[0].attempts == 2
+    assert intents[0].status == "reconciliation_required"
+
+
+@pytest.mark.anyio
+async def test_database_write_failure_after_download_keeps_chunk_replayable(
+    postgres_store, monkeypatch
+):
+    descriptor = _descriptor(8, "history", 401, 405)
+
+    def handler(request):
+        if request.url.path == "/events/chunks":
+            kind = request.url.params["kind"]
+            return httpx.Response(
+                200,
+                json=[descriptor] if kind == "history" else [],
+            )
+        return httpx.Response(
+            200,
+            content=_body(
+                {"event_id": 401, "type": "lead"},
+                {"event_id": 405, "type": "call"},
+            ),
+        )
+
+    async def fail_write(*args, **kwargs):
+        raise SQLAlchemyError("injected database write failure")
+
+    monkeypatch.setattr(postgres_store, "commit_chunk_stream", fail_write)
+    client = SimulatorClient(
+        Settings("http://simulator.test"), transport=httpx.MockTransport(handler)
+    )
+    async with client:
+        with pytest.raises(SQLAlchemyError, match="injected"):
+            await EventIngestionService(client).ingest_available_chunks(postgres_store)
+
+    assert await postgres_store.get_checkpoint("simulator") is None
+    assert await postgres_store.get_event(401) is None
+
+
+@pytest.mark.anyio
+async def test_large_chunk_throughput_and_memory_are_measured(postgres_store):
+    event_count = 30_000
+    first_id = 1_000_001
+    last_id = first_id + (event_count - 1) * 2
+    descriptor = {
+        "chunk": 26,
+        "kind": "history",
+        "events": event_count,
+        "first_event_id": first_id,
+        "last_event_id": last_id,
+        "until_minute": 0,
+    }
+
+    class GeneratedChunk(httpx.AsyncByteStream):
+        async def __aiter__(self):
+            for offset in range(event_count):
+                payload = {
+                    "event_id": first_id + offset * 2,
+                    "type": "call",
+                    "opaque": "x" * 48,
+                }
+                yield (json.dumps(payload, separators=(",", ":")) + "\n").encode()
+
+        async def aclose(self):
+            pass
+
+    def handler(request):
+        if request.url.path == "/events/chunks":
+            kind = request.url.params["kind"]
+            return httpx.Response(
+                200,
+                json=[descriptor] if kind == "history" else [],
+            )
+        return httpx.Response(200, stream=GeneratedChunk())
+
+    client = SimulatorClient(
+        Settings("http://simulator.test"), transport=httpx.MockTransport(handler)
+    )
+    tracemalloc.start()
+    started = time.perf_counter()
+    async with client:
+        committed, inserted = await EventIngestionService(
+            client
+        ).ingest_available_chunks(postgres_store, batch_size=500)
+    elapsed = time.perf_counter() - started
+    _, peak_bytes = tracemalloc.get_traced_memory()
+    tracemalloc.stop()
+
+    assert (committed, inserted) == (1, event_count)
+    assert await postgres_store.get_checkpoint("simulator") == 26
+    assert peak_bytes < 16 * 1024 * 1024
+    print(
+        f"synthetic streamed ingestion: {event_count} events, "
+        f"{event_count / elapsed:.0f} events/s, {peak_bytes / 1024 / 1024:.2f} MiB traced peak"
+    )

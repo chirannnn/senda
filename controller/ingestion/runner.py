@@ -19,6 +19,7 @@ from controller.storage.store import DatabaseStore
 
 ADVANCE_OPERATION = "simulator_advance"
 CHECKPOINT_KEY = "simulator"
+MAX_ADVANCE_ATTEMPTS = 2
 UNRESOLVED_STATUSES = ("pending", "in_progress", "reconciliation_required")
 
 
@@ -141,6 +142,23 @@ async def reconcile_pending_advances(
             )
             raise AdvanceReconciliationError(
                 f"advance intent {operation.dedupe_key} has conflicting remote state"
+            )
+
+        if operation.attempts >= MAX_ADVANCE_ATTEMPTS:
+            bounded_payload = payload | {
+                "reconciliation": {
+                    "result": "no_progress_retry_limit_reached",
+                    "state": current,
+                }
+            }
+            await _set_intent(
+                store,
+                operation.dedupe_key,
+                "reconciliation_required",
+                bounded_payload,
+            )
+            raise AdvanceReconciliationError(
+                f"advance intent {operation.dedupe_key} exhausted its reconciled retry limit"
             )
 
         minutes = payload.get("requested_minutes")

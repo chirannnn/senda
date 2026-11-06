@@ -123,7 +123,9 @@ chunks are ingested. If the POST outcome is ambiguous, the controller stops with
 restart, it compares the saved pre-request simulator state with `/sim/state` and ordered chunk listings. It
 ingests published chunks and completes the intent when progress is visible; it retries the same intent only
 after the state is unchanged and no new descriptors are available. Missing or conflicting evidence leaves the
-intent unresolved and stops further advances.
+intent unresolved and stops further advances. Chunk reads may be replayed; unique event IDs and per-chunk
+transactions provide effectively-once local persistence, not end-to-end exactly-once delivery. Advance is
+bounded to the initial POST plus one reconciled retry; repeated ambiguity requires manual reconciliation.
 
 ### Repository layout
 
@@ -135,10 +137,12 @@ controller/
   observability/    structured logging
   runtime/          process lifecycle
   storage/          database models, async store, audit log
+  ingestion/        descriptor validation, NDJSON parsing, replay, and advance recovery
 migrations/         Alembic environment and versioned revisions
 tests/
-  unit/             isolated controller tests
+  unit/             isolated controller and ingestion tests
   integration/storage/  PostgreSQL-backed persistence tests
+  integration/ingestion/ PostgreSQL-backed ingestion/recovery tests
   contract/         simulator contract tests
 ```
 

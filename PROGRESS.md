@@ -1,10 +1,10 @@
 # Progress Tracking — Outcome-First Agent Loop
 
-## Overall status: IN PROGRESS — CHUNK 3
+## Overall status: COMPLETE — CHUNK 3
 
-**Current phase:** Chunk 3 reliable event ingestion
+**Current phase:** Chunk 3 reliable event ingestion complete
 **Current chunk:** 3 — Reliable event ingestion
-**Current next action:** Chunk 3 subtask 6 — hardening and final verification.
+**Current next action:** Chunk 4 — History, KPI facts, and audit query (not started).
 
 ## Implementation progress
 
@@ -12,7 +12,7 @@
 |---|---|---|---|
 | 1 | Runtime and launcher | COMPLETE | `cfc28d2`, `730cf26`, `71bdd8a` (and earlier foundation/config commits listed below) |
 | 2 | Durable schema and audit | COMPLETE | `aab9708`, `2443889`, `31af0ea`, `a3d7a6b`, `e88ed27` |
-| 3 | Simulator chunk ingestion | IN PROGRESS | — |
+| 3 | Simulator chunk ingestion | COMPLETE | `d921490`, `b6b88f6`, `6bdce40`, `f975203`, `09bf0b6`, this hardening commit |
 | 4 | History, KPI facts, audit query | NOT STARTED | — |
 | 5 | Governance lifecycle | NOT STARTED | — |
 | 6 | Statistical comparison | NOT STARTED | — |
@@ -29,8 +29,8 @@
 | 2. Historical ingestion | COMPLETE | `.venv/Scripts/python.exe -m pytest -q tests/unit/ingestion/ tests/unit/test_simulator_client.py` — 25 passed; Ruff check/format and `git diff --check` passed | `b6b88f6` |
 | 3. Transactional persistence | COMPLETE | PostgreSQL integration plus storage regression tests — 14 passed; Ruff check/format and `git diff --check` passed | `6bdce40` |
 | 4. Live ingestion | COMPLETE | Focused unit/runtime and PostgreSQL storage/ingestion checks — 40 passed; one live POST persisted two events through checkpoint 7 and completed its outbox intent; Ruff and format passed | `f975203` |
-| 5. Crash recovery | COMPLETE | Focused parser/runtime and PostgreSQL recovery suite — 29 passed; timeout-after-apply recovered without another POST; unchanged state plus empty listing allowed one persisted retry; API outage made no retry | pending |
-| 6. Hardening | NOT STARTED | — | — |
+| 5. Crash recovery | COMPLETE | Focused parser/runtime and PostgreSQL recovery suite — 29 passed; timeout-after-apply recovered without another POST; unchanged state plus empty listing allowed one persisted retry; API outage made no retry | `09bf0b6` |
+| 6. Hardening | COMPLETE | 19 ingestion unit tests; 11 ingestion integration tests; full suite 93 passed; Ruff, format, compile, Alembic and diff checks passed | this commit |
 
 ## Environment setup results (2026-11-06)
 
@@ -161,4 +161,16 @@ Do not rewrite prior history.
 
 ## Next action
 
-Chunk 2 and the repository structure refactor are complete. Chunk 3 subtasks 1–5 are complete; subtask 6 (hardening and final verification) is next.
+Chunk 3 is complete. Next: Chunk 4 — History, KPI facts, and audit query. Chunk 4 has not started.
+
+### Chunk 3 measured evidence (synthetic HTTP stream, PostgreSQL 18)
+
+- Ordered history/live descriptors at chunk IDs 0 and 3 committed four events with IDs 1, 4, 9, and 12; the committed global descriptor checkpoint was 3. This verifies chunk and event IDs are not treated as consecutive.
+- A malformed second chunk was partially inserted in batches of one for failure injection, then rejected by descriptor count validation. Its event rows and checkpoint rolled back; the first chunk remained committed at checkpoint 1. Restart replay committed chunk 4 and reached checkpoint 4 without duplicating chunk 1.
+- Live-advance integration issued one POST, persisted its intent and returned descriptor, stored two events, and reached checkpoint 7. Timeout-after-apply restart recovered two events at checkpoint 12 without a second POST. A separate no-progress case retried the same intent after matching pre/post state and an empty listing; its attempt count was 2 and it completed at checkpoint 5. Reconciliation GET outage left the intent in progress and made no additional POST.
+- Synthetic streamed PostgreSQL integration ingested 30,000 generated events in batches of 500 at **1,601 events/s** with **2.54 MiB peak traced Python memory** on this Windows development host. This is a local synthetic measurement, not a simulator load-scenario result or grading-host claim.
+- Runtime integration bootstrapped two history events before one live advance, persisted two live events, and completed at checkpoint 4. Restart recovery used fresh client/store instances over the same PostgreSQL data; no OS-level kill/restart demonstration was run in this chunk.
+- Final checks: `.venv/Scripts/python.exe -m pytest -q tests/unit/ingestion/` — **19 passed**; `.venv/Scripts/python.exe -m pytest -q tests/integration/ingestion/` — **11 passed**; `.venv/Scripts/python.exe -m pytest -q` — **93 passed**; `ruff check .` passed; `ruff format --check .` reported 47 files already formatted; `.venv/Scripts/python.exe -m compileall -q controller tests` passed; Alembic `upgrade head` repeated and `check` reported no new operations; `git diff --check` passed. Ruff excludes only assignment-provided `sim/` and deliberately naive `examples/naive_controller.py`; neither was modified.
+- No schema migration was needed. Public scenarios remain NOT RUN; no scenario YAML or run-directory data was used by controller decisions.
+
+Known limits: these are synthetic development-host measurements, not `public_03_load` or grading-host results. The 1 MiB memory spool spills larger chunks to temporary disk without a hard total-byte cap, so deployments need sufficient temp capacity. Event IDs and the checkpoint are scoped to one simulator world per database; use a fresh database for independent simulator worlds until multi-run namespacing is designed.

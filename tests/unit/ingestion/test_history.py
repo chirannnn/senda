@@ -1,10 +1,14 @@
 import httpx
 import pytest
+from sqlalchemy.exc import SQLAlchemyError
 
 from controller.clients.simulator import SimulatorClient
 from controller.config import Settings
+from controller.errors import SimulatorError
 from controller.ingestion.events import EventValidationError
+from controller.ingestion.runner import advance_and_ingest
 from controller.ingestion.service import EventIngestionService
+from controller.storage.store import DatabaseStore
 
 
 def _descriptor(chunk, kind):
@@ -90,6 +94,35 @@ async def test_interrupted_download_retries_before_exposing_any_lines():
 
 
 @pytest.mark.anyio
+async def test_exhausted_interrupted_download_exposes_no_partial_lines():
+    attempts = 0
+
+    class InterruptedStream(httpx.AsyncByteStream):
+        async def __aiter__(self):
+            yield b'{"event_id":1,"type":"lead"}\n'
+            raise httpx.ReadError("interrupted", request=httpx.Request("GET", "/"))
+
+        async def aclose(self):
+            pass
+
+    def handler(request):
+        nonlocal attempts
+        attempts += 1
+        return httpx.Response(200, stream=InterruptedStream())
+
+    client = SimulatorClient(
+        Settings("http://simulator.test", get_retries=0),
+        transport=httpx.MockTransport(handler),
+    )
+    async with client:
+        with pytest.raises(SimulatorError, match="failed after 1 attempts"):
+            async with client.stream_chunk_lines(0):
+                pytest.fail("partial body must not be exposed")
+
+    assert attempts == 1
+
+
+@pytest.mark.anyio
 async def test_history_list_rejects_live_descriptor():
     client = SimulatorClient(
         Settings("http://simulator.test"),
@@ -109,3 +142,26 @@ async def test_list_chunks_rejects_invalid_kind_and_cursor():
         await client.list_chunks("unknown")
     with pytest.raises(ValueError, match="cursor"):
         await client.list_chunks("history", after=True)
+
+
+@pytest.mark.anyio
+async def test_database_outage_prevents_any_advance_post():
+    requests = []
+    client = SimulatorClient(
+        Settings("http://simulator.test"),
+        transport=httpx.MockTransport(
+            lambda request: (
+                requests.append(request.method) or httpx.Response(200, json={})
+            )
+        ),
+    )
+    store = DatabaseStore(
+        "postgresql+asyncpg://controller_test@127.0.0.1:1/unavailable"
+    )
+    try:
+        async with client:
+            with pytest.raises((SQLAlchemyError, OSError)):
+                await advance_and_ingest(client, store, 15)
+        assert requests == []
+    finally:
+        await store.close()

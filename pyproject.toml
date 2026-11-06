@@ -1,0 +1,5 @@
+[tool.ruff]
+# The simulator and deliberately naive reference controller are assignment inputs,
+# not maintained controller source. Keep the required repo-wide commands focused
+# on code owned by this project without changing those supplied files.
+extend-exclude = ["sim", "examples/naive_controller.py"]
