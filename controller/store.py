@@ -6,12 +6,14 @@ import os
 from collections.abc import AsyncIterator, Mapping
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Self
+from uuid import UUID
 
 from alembic import command
 from alembic.config import Config
-from sqlalchemy import select, text
+from sqlalchemy import func, or_, select, text
 from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 from sqlalchemy.engine import URL, Connection, make_url
 from sqlalchemy.exc import ArgumentError
@@ -23,7 +25,12 @@ from sqlalchemy.ext.asyncio import (
 )
 
 from controller.errors import ConfigurationError
-from controller.schema import SimulatorEvent
+from controller.schema import (
+    OutboxOperation,
+    ProcessingCheckpoint,
+    SimulatorEvent,
+    WorkflowReference,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -34,6 +41,18 @@ class EventRecord:
     chunk_number: int
     kind: str
     payload: dict[str, object]
+
+
+class EventConflictError(RuntimeError):
+    """The same event identity was replayed with different stored content."""
+
+
+class CheckpointRegressionError(RuntimeError):
+    """A write attempted to move an ordered checkpoint backwards."""
+
+
+class OutboxConflictError(RuntimeError):
+    """A stable outbox identifier was reused for a different operation."""
 
 
 class DatabaseStore:
@@ -170,6 +189,147 @@ class DatabaseStore:
         async with self._sessions() as session:
             return await session.get(SimulatorEvent, event_id)
 
+    async def ensure_workflow(self, session: AsyncSession, workflow_id: str) -> None:
+        """Create or refresh a local reference without copying workflow config."""
+        self.require_transaction(session)
+        statement = (
+            postgresql_insert(WorkflowReference)
+            .values(workflow_id=workflow_id)
+            .on_conflict_do_update(
+                index_elements=[WorkflowReference.workflow_id],
+                set_={"updated_at": func.now()},
+            )
+        )
+        await session.execute(statement)
+
+    async def advance_checkpoint(
+        self, session: AsyncSession, checkpoint_key: str, chunk_number: int
+    ) -> int:
+        """Advance to an API-ordered chunk descriptor inside the caller's transaction."""
+        self.require_transaction(session)
+        table = ProcessingCheckpoint
+        statement = (
+            postgresql_insert(table)
+            .values(checkpoint_key=checkpoint_key, chunk_number=chunk_number)
+            .on_conflict_do_update(
+                index_elements=[table.checkpoint_key],
+                set_={"chunk_number": chunk_number, "updated_at": func.now()},
+                where=or_(
+                    table.chunk_number.is_(None),
+                    table.chunk_number <= chunk_number,
+                ),
+            )
+            .returning(table.chunk_number)
+        )
+        result = await session.execute(statement)
+        advanced_to = result.scalar_one_or_none()
+        if advanced_to is None:
+            current = await session.scalar(
+                select(table.chunk_number).where(table.checkpoint_key == checkpoint_key)
+            )
+            raise CheckpointRegressionError(
+                f"checkpoint {checkpoint_key!r} cannot move from {current} to {chunk_number}"
+            )
+        return advanced_to
+
+    async def get_checkpoint(self, checkpoint_key: str) -> int | None:
+        self._ensure_open()
+        async with self._sessions() as session:
+            return await session.scalar(
+                select(ProcessingCheckpoint.chunk_number).where(
+                    ProcessingCheckpoint.checkpoint_key == checkpoint_key
+                )
+            )
+
+    async def commit_chunk(
+        self,
+        checkpoint_key: str,
+        chunk_number: int,
+        events: list[EventRecord],
+    ) -> tuple[int, ...]:
+        """Persist a chunk's raw rows and descriptor checkpoint atomically.
+
+        This is a storage primitive only: it does not fetch, parse, or dispatch
+        simulator events. Any failed insert or checkpoint update rolls back both.
+        """
+        async with self.transaction() as session:
+            inserted_ids = await self.insert_events(session, events)
+            await self.advance_checkpoint(session, checkpoint_key, chunk_number)
+            return inserted_ids
+
+    async def create_outbox_operation(
+        self,
+        session: AsyncSession,
+        *,
+        operation_type: str,
+        dedupe_key: str,
+        payload: dict[str, object],
+        workflow_id: str | None = None,
+    ) -> OutboxOperation:
+        """Persist a future external operation once per caller-chosen stable key."""
+        self.require_transaction(session)
+        if workflow_id is not None:
+            await self.ensure_workflow(session, workflow_id)
+        statement = (
+            postgresql_insert(OutboxOperation)
+            .values(
+                operation_type=operation_type,
+                dedupe_key=dedupe_key,
+                payload=payload,
+                workflow_id=workflow_id,
+            )
+            .on_conflict_do_nothing(index_elements=[OutboxOperation.dedupe_key])
+            .returning(OutboxOperation.id)
+        )
+        inserted_id = (await session.execute(statement)).scalar_one_or_none()
+        existing = await session.scalar(
+            select(OutboxOperation).where(OutboxOperation.dedupe_key == dedupe_key)
+        )
+        if existing is None:
+            raise RuntimeError("outbox row was not visible after its insert")
+        if inserted_id is None and (
+            existing.operation_type != operation_type
+            or existing.payload != payload
+            or existing.workflow_id != workflow_id
+        ):
+            raise OutboxConflictError(
+                f"outbox key {dedupe_key!r} was reused for a different operation"
+            )
+        return existing
+
+    async def get_outbox_operation(self, dedupe_key: str) -> OutboxOperation | None:
+        self._ensure_open()
+        async with self._sessions() as session:
+            return await session.scalar(
+                select(OutboxOperation).where(OutboxOperation.dedupe_key == dedupe_key)
+            )
+
+    async def update_outbox_status(
+        self,
+        session: AsyncSession,
+        operation_id: UUID,
+        status: str,
+        *,
+        increment_attempts: bool = False,
+    ) -> OutboxOperation | None:
+        """Record local reconciliation state; performs no external operation."""
+        self.require_transaction(session)
+        operation = await session.get(OutboxOperation, operation_id)
+        if operation is None:
+            return None
+        operation.status = status
+        operation.updated_at = datetime.now(UTC)
+        if increment_attempts:
+            operation.attempts += 1
+        operation.completed_at = datetime.now(UTC) if status == "succeeded" else None
+        await session.flush()
+        return operation
+
+    def require_transaction(self, session: AsyncSession) -> None:
+        self._ensure_open()
+        if not session.in_transaction():
+            raise RuntimeError("storage write requires an active store transaction")
+
     async def close(self) -> None:
         """Dispose pooled connections; safe to call repeatedly."""
         if not self._closed:
@@ -199,7 +359,3 @@ class DatabaseStore:
     def _ensure_open(self) -> None:
         if self._closed:
             raise RuntimeError("database store is closed")
-
-
-class EventConflictError(RuntimeError):
-    """The same event identity was replayed with different stored content."""
