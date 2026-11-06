@@ -38,9 +38,11 @@
 |---|---|---|---|
 | 1. Package foundation, typed errors and JSON logging | COMPLETE | `python -m pytest -q tests/unit/test_logging.py` — 2 passed; `compileall` passed | `e547b63 feat(runtime): add package foundation and safe JSON logging` |
 | 2. Typed configuration and validation | COMPLETE | 20 unit tests passed; Ruff check/format passed; `compileall` passed | `196a9ec feat(config): add validated runtime settings` |
-| 3. Async simulator HTTP client | COMPLETE | 28 unit tests passed; Ruff check/format passed; `compileall` passed | `feat(http): add bounded async simulator client` |
-| 4. Runtime bootstrap, advance loop and graceful stop | IN PROGRESS | — | — |
+| 3. Async simulator HTTP client | COMPLETE | 28 unit tests passed; Ruff check/format passed; `compileall` passed | `cfc28d2 feat(http): add bounded async simulator client` |
+| 4. Runtime bootstrap, advance loop and graceful stop | COMPLETE | 5 runtime unit tests passed; Ruff check/format passed; `compileall` passed | `feat(runtime): add readiness and graceful advance loop` |
 | 5. CLI, cross-platform launchers, docs and final verification | NOT STARTED | — | — |
+
+Subtask 4 starts the simulator through documented readiness/state/workflow reads and advances until `finished`, with graceful stopping between requests. A `409 finished` response is reconciled by reading state. An ambiguous advance stops the process without another POST. Durable advance-intent persistence and recovery are intentionally not implemented in Chunk 1 and remain required in the later database/recovery chunks.
 
 ## Test and scenario results
 
