@@ -12,7 +12,7 @@
 |---|---|---|---|
 | 1 | Runtime and launcher | COMPLETE | `cfc28d2`, `730cf26`, `71bdd8a` (and earlier foundation/config commits listed below) |
 | 2 | Durable schema and audit | COMPLETE | `aab9708`, `2443889`, `31af0ea`, `a3d7a6b`, `e88ed27` |
-| 3 | Simulator chunk ingestion | COMPLETE | `d921490`, `b6b88f6`, `6bdce40`, `f975203`, `09bf0b6`, this hardening commit |
+| 3 | Simulator chunk ingestion | COMPLETE | `d921490`, `b6b88f6`, `6bdce40`, `f975203`, `09bf0b6`, `adf5b54` |
 | 4 | History, KPI facts, audit query | NOT STARTED | — |
 | 5 | Governance lifecycle | NOT STARTED | — |
 | 6 | Statistical comparison | NOT STARTED | — |
@@ -30,7 +30,7 @@
 | 3. Transactional persistence | COMPLETE | PostgreSQL integration plus storage regression tests — 14 passed; Ruff check/format and `git diff --check` passed | `6bdce40` |
 | 4. Live ingestion | COMPLETE | Focused unit/runtime and PostgreSQL storage/ingestion checks — 40 passed; one live POST persisted two events through checkpoint 7 and completed its outbox intent; Ruff and format passed | `f975203` |
 | 5. Crash recovery | COMPLETE | Focused parser/runtime and PostgreSQL recovery suite — 29 passed; timeout-after-apply recovered without another POST; unchanged state plus empty listing allowed one persisted retry; API outage made no retry | `09bf0b6` |
-| 6. Hardening | COMPLETE | 19 ingestion unit tests; 11 ingestion integration tests; full suite 93 passed; Ruff, format, compile, Alembic and diff checks passed | this commit |
+| 6. Hardening | COMPLETE | 19 ingestion unit tests; 11 ingestion integration tests; full suite 93 passed; Ruff, format, compile, Alembic and diff checks passed | `adf5b54` |
 
 ## Environment setup results (2026-11-06)
 

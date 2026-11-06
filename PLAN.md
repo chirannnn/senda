@@ -4,7 +4,7 @@
 
 Build a single-process controller that runs `./run.sh <SIM_URL>` to completion, consumes only the simulator HTTP contract, optimizes each workflow's declared primary KPI while protecting its separate guardrail, submits every controller-initiated customer-facing change through governance, and keeps a restart-safe audit trail. The mandatory delivery floor is unattended `public_01_dev` and `public_02_incidents`, C12 auditability, constraint compliance, and completed `SUBMISSION.md`. Other capabilities are scoped below.
 
-This reviewed plan is the implementation specification. Chunks 1 and 2 are complete; Chunk 3 has not started. The approved infrastructure direction is Python 3.12 locally in `.venv`, PostgreSQL 18 in Docker for local development with a persistent named volume, SQLAlchemy async + asyncpg, and Alembic. If an assessment database is provided at execution, use it; otherwise use the configured local development PostgreSQL environment. Statistical operating point and optional capability scope remain unapproved until review.
+This reviewed plan is the implementation specification. Chunks 1–3 are complete; Chunk 4 has not started. The approved infrastructure direction is Python 3.12 locally in `.venv`, PostgreSQL 18 in Docker for local development with a persistent named volume, SQLAlchemy async + asyncpg, and Alembic. If an assessment database is provided at execution, use it; otherwise use the configured local development PostgreSQL environment. Statistical operating point and optional capability scope remain unapproved until review.
 
 ## 2. Repository findings and verified contract
 
@@ -167,7 +167,7 @@ Chunks 1–3 are complete; Chunk 4 has not started. Each remaining chunk must en
 - **Unit:** parser, malformed/out-of-order events, duplicate IDs, descriptor ordering, interrupted stream, database outage before POST. **Integration:** history/live persistence, replay, atomic rollback, runtime loop, advance intent and restart reconciliation. **Failure:** download interruption, malformed/truncated chunk, database write failure, API outage, timeout-after-apply, no-progress and repeated ambiguity.
 - **Acceptance:** history/live labels preserved; incomplete chunks never advance checkpoints; bounded-memory stream and 500-event DB batches; duplicate events do not create duplicate local effects; no exactly-once claim.
 - **Expected:** `.venv` pytest unit/integration suites pass. A generated 30,000-event PostgreSQL test measured throughput/memory; public load scenario remains unrun.
-- **Commits:** `d921490`, `b6b88f6`, `6bdce40`, `f975203`, `09bf0b6`; final hardening commit follows verification.
+- **Commits:** `d921490`, `b6b88f6`, `6bdce40`, `f975203`, `09bf0b6`, `adf5b54`.
 - **PROGRESS:** actual test counts, checkpoint/replay and recovery evidence, synthetic throughput/memory, unrun public scenarios.
 
 ### Chunk 4 — History, KPI and audit query

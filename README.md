@@ -88,9 +88,10 @@ dependencies with `.venv/bin/python -m pip install -r requirements.txt` on Linux
 `./run.sh http://127.0.0.1:8700` from Linux/macOS Bash or Windows Git Bash. PowerShell can invoke the same
 entry point directly with `.\.venv\Scripts\python.exe -m controller http://127.0.0.1:8700`.
 
-`run.sh` selects the local virtual environment and does not start or require Docker or PostgreSQL. The runtime
-uses `CONTROLLER_*` environment settings for advance interval, HTTP timeouts, bounded GET retries, connection
-limits, and log level; defaults are listed in `controller/config/settings.py`. It checks simulator health,
+`run.sh` selects the local virtual environment and does not start or require Docker. The runtime requires the
+PostgreSQL connection in `CONTROLLER_DATABASE_URL` and uses `CONTROLLER_*` settings for advance interval, HTTP
+timeouts, bounded GET retries, connection limits, and log level; defaults are listed in
+`controller/config/settings.py`. It checks simulator health,
 workflows and state over HTTP, then advances until the simulator reports completion. `Ctrl+C` or `SIGTERM`
 stops after any in-flight HTTP operation finishes. JSON logs go to stderr; the simulator URL and credentials
 are not logged. An ambiguous advance response exits safely without issuing another advance.
