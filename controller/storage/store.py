@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import os
-from collections.abc import AsyncIterator, Mapping
+from collections.abc import AsyncIterable, AsyncIterator, Mapping
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -289,6 +289,39 @@ class DatabaseStore:
             inserted_ids = await self.insert_events(session, events)
             await self.advance_checkpoint(session, checkpoint_key, chunk_number)
             return inserted_ids
+
+    async def commit_chunk_stream(
+        self,
+        checkpoint_key: str,
+        chunk_number: int,
+        events: AsyncIterable[EventRecord],
+        *,
+        batch_size: int = 500,
+    ) -> int:
+        """Insert a streamed chunk in bounded batches with one atomic checkpoint.
+
+        The caller must provide events in validated API order. No checkpoint is
+        written until the input is exhausted successfully and all batches have
+        been flushed in the same transaction.
+        """
+        if batch_size < 1:
+            raise ValueError("batch size must be positive")
+        inserted_count = 0
+        async with self.transaction() as session:
+            batch: list[EventRecord] = []
+            async for event in events:
+                if event.chunk_number != chunk_number:
+                    raise ValueError(
+                        "every event must match the checkpoint chunk number"
+                    )
+                batch.append(event)
+                if len(batch) >= batch_size:
+                    inserted_count += len(await self.insert_events(session, batch))
+                    batch.clear()
+            if batch:
+                inserted_count += len(await self.insert_events(session, batch))
+            await self.advance_checkpoint(session, checkpoint_key, chunk_number)
+        return inserted_count
 
     async def create_outbox_operation(
         self,
