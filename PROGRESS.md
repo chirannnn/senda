@@ -1,17 +1,17 @@
 # Progress Tracking — Outcome-First Agent Loop
 
-## Overall status: COMPLETE — CHUNK 1
+## Overall status: IN PROGRESS — CHUNK 2
 
-**Current phase:** Chunk 1 complete; awaiting user review
-**Current chunk:** 1 — Runtime and launcher
-**Current next action:** Wait for explicit user approval before starting Chunk 2.
+**Current phase:** Chunk 2 implementation
+**Current chunk:** 2 — Durable schema and audit
+**Current next action:** Complete Chunk 2 subtasks and verify against PostgreSQL.
 
 ## Implementation progress
 
 | Chunk | Name | Status | Commit |
 |---|---|---|---|
 | 1 | Runtime and launcher | COMPLETE | `cfc28d2`, `730cf26`, `71bdd8a` (and earlier foundation/config commits listed below) |
-| 2 | Durable schema and audit | NOT STARTED | — |
+| 2 | Durable schema and audit | IN PROGRESS | — |
 | 3 | Simulator chunk ingestion | NOT STARTED | — |
 | 4 | History, KPI facts, audit query | NOT STARTED | — |
 | 5 | Governance lifecycle | NOT STARTED | — |
@@ -30,7 +30,7 @@
 - Generated development-only credentials are stored outside the repository at `%LOCALAPPDATA%\FormiAgenticUniverse\postgres-dev.env`; credential values were not displayed. Compose config validation passed.
 - Container became healthy. Async SQLAlchemy connection succeeded against PostgreSQL **18.6**. A temporary row was written, the container was restarted, and the row was read back successfully. Temporary probe table was then removed. Volume mount inspected and confirmed.
 - `requirements.txt` now includes `SQLAlchemy[asyncio]`, Alembic and asyncpg so the selected database driver/async support is reproducible. No assessment database connection was specified in the assignment materials or configured in the inspected environment.
-- Chunk 1 is in progress. No database schema, event ingestion, or later-chunk logic has been started.
+- Chunk 1 is complete. Chunk 2 is now in progress; no event ingestion or later-chunk behavior has started.
 
 ## Chunk 1 subtask progress
 
@@ -41,6 +41,18 @@
 | 3. Async simulator HTTP client | COMPLETE | 28 unit tests passed; Ruff check/format passed; `compileall` passed | `cfc28d2 feat(http): add bounded async simulator client` |
 | 4. Runtime bootstrap, advance loop and graceful stop | COMPLETE | 5 runtime unit tests passed; Ruff check/format passed; `compileall` passed | `730cf26 feat(runtime): add readiness and graceful advance loop` |
 | 5. CLI, cross-platform launchers, docs and final verification | COMPLETE | Full suite: 42 passed; Ruff check/format and compileall passed for `controller` and `tests/unit`; Git Bash launcher syntax and argument/failure exits verified | `71bdd8a feat(cli): add virtualenv launcher and runtime documentation` |
+
+## Chunk 2 subtask progress
+
+| Subtask | Status | Validation | Commit |
+|---|---|---|---|
+| 1. Versioned database schema and initial Alembic revision | COMPLETE | 4 schema metadata tests passed; Ruff and compile checks passed; `alembic history` lists initial revision | Pending commit |
+| 2. Async database store and configuration | NOT STARTED | — | — |
+| 3. Event uniqueness and atomic persistence primitives | NOT STARTED | — | — |
+| 4. Checkpoint, audit and outbox operations | NOT STARTED | — | — |
+| 5. PostgreSQL failure/restart and migration verification | NOT STARTED | — | — |
+
+Subtask 1 defines controller-owned run/workflow references, raw event envelopes, nullable ordered-descriptor checkpoints, append-only audit records, and deduplicated outbox operations. Event payloads remain JSON without inferred simulator fields. Checkpoint positions have no numeric consecutiveness constraint. The initial Alembic migration is present but has not yet been applied to a database.
 
 The Chunk 1 runtime is a foundation only. It does not yet persist events or advance intents and does not make optimization or governance decisions. It halts on ambiguous advance outcomes rather than issuing a duplicate POST; durable reconciliation is required in the later persistence/recovery chunks. Public simulator scenarios were not run as part of Chunk 1.
 
