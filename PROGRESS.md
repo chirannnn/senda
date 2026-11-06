@@ -1,16 +1,16 @@
 # Progress Tracking — Outcome-First Agent Loop
 
-## Overall status: PLANNING
+## Overall status: IN PROGRESS — CHUNK 1
 
-**Current phase:** Plan review  
-**Current chunk:** NONE — no implementation chunks started  
-**Current next action:** Wait for explicit user approval before Chunk 1.
+**Current phase:** Chunk 1 implementation
+**Current chunk:** 1 — Runtime and launcher
+**Current next action:** Complete Chunk 1 subtasks; do not begin Chunk 2.
 
 ## Implementation progress
 
 | Chunk | Name | Status | Commit |
 |---|---|---|---|
-| 1 | Runtime and launcher | NOT STARTED | — |
+| 1 | Runtime and launcher | IN PROGRESS | — |
 | 2 | Durable schema and audit | NOT STARTED | — |
 | 3 | Simulator chunk ingestion | NOT STARTED | — |
 | 4 | History, KPI facts, audit query | NOT STARTED | — |
@@ -30,8 +30,17 @@
 - Generated development-only credentials are stored outside the repository at `%LOCALAPPDATA%\FormiAgenticUniverse\postgres-dev.env`; credential values were not displayed. Compose config validation passed.
 - Container became healthy. Async SQLAlchemy connection succeeded against PostgreSQL **18.6**. A temporary row was written, the container was restarted, and the row was read back successfully. Temporary probe table was then removed. Volume mount inspected and confirmed.
 - `requirements.txt` now includes `SQLAlchemy[asyncio]`, Alembic and asyncpg so the selected database driver/async support is reproducible. No assessment database connection was specified in the assignment materials or configured in the inspected environment.
-- No application code was written; Chunk 1 remains NOT STARTED. No implementation tests were run.
-- No application code was written; Chunk 1 remains NOT STARTED. No implementation tests were run.
+- Chunk 1 is in progress. No database schema, event ingestion, or later-chunk logic has been started.
+
+## Chunk 1 subtask progress
+
+| Subtask | Status | Validation | Commit |
+|---|---|---|---|
+| 1. Package foundation, typed errors and JSON logging | COMPLETE | `python -m pytest -q tests/unit/test_logging.py` — 2 passed; `compileall` passed | `feat(runtime): add package foundation and safe JSON logging` |
+| 2. Typed configuration and validation | NOT STARTED | — | — |
+| 3. Async simulator HTTP client | NOT STARTED | — | — |
+| 4. Runtime bootstrap, advance loop and graceful stop | NOT STARTED | — | — |
+| 5. CLI, cross-platform launchers, docs and final verification | NOT STARTED | — | — |
 
 ## Test and scenario results
 
@@ -42,7 +51,7 @@
 | public_03_load | NOT RUN | — |
 | Crash recovery | NOT RUN | — |
 
-No application code was written and no implementation tests were run. This turn performed environment setup and package/import verification only.
+No assessment scenario or full end-to-end run has been performed yet. Chunk 1 unit-test results are tracked in the subtask table above.
 
 ## Approved and unapproved decisions
 
@@ -75,8 +84,8 @@ No application code was written and no implementation tests were run. This turn 
 
 ## Git history
 
-No implementation commits exist. Preserve genuine incremental commits after implementation is authorized; do not fabricate history.
+Record each genuine Chunk 1 commit in the subtask table above. Do not rewrite prior history.
 
 ## Next action
 
-Wait for explicit user approval before implementation. Chunk 1 has not started.
+Complete Chunk 1 only, then wait for explicit user approval before Chunk 2.
