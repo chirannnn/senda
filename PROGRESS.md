@@ -11,7 +11,7 @@
 | Chunk | Name | Status | Commit |
 |---|---|---|---|
 | 1 | Runtime and launcher | COMPLETE | `cfc28d2`, `730cf26`, `71bdd8a` (and earlier foundation/config commits listed below) |
-| 2 | Durable schema and audit | COMPLETE | `aab9708`, `2443889`, `31af0ea`, `a3d7a6b`, `PENDING` final acceptance commit |
+| 2 | Durable schema and audit | COMPLETE | `aab9708`, `2443889`, `31af0ea`, `a3d7a6b`, `e88ed27` |
 | 3 | Simulator chunk ingestion | NOT STARTED | — |
 | 4 | History, KPI facts, audit query | NOT STARTED | — |
 | 5 | Governance lifecycle | NOT STARTED | — |
@@ -50,7 +50,7 @@
 | 2. Async database store and configuration | COMPLETE | 6 configuration/lifecycle unit tests passed; Ruff and compile checks passed | `2443889 feat(storage): add async database store` |
 | 3. Event uniqueness and atomic persistence primitives | COMPLETE | PostgreSQL insert/read, duplicate no-op, and conflicting replay tests passed; 12 schema/store tests passed | `31af0ea feat(storage): persist raw events idempotently` |
 | 4. Checkpoint, audit and outbox operations | COMPLETE | PostgreSQL store tests passed, including atomic chunk/checkpoint writes, rollback, regression rejection, audit and outbox persistence | `a3d7a6b feat(storage): add checkpoint audit and outbox operations` |
-| 5. PostgreSQL failure/restart and migration verification | COMPLETE | `tests/controller/test_store.py`: 11 passed; full suite: 63 passed; repeat migrations and Alembic schema check passed; Ruff and compile checks passed | `feat: add durable event and audit store` |
+| 5. PostgreSQL failure/restart and migration verification | COMPLETE | `tests/controller/test_store.py`: 11 passed; full suite: 63 passed; repeat migrations and Alembic schema check passed; Ruff and compile checks passed | `e88ed27 feat: add durable event and audit store` |
 
 Subtask 1 defines controller-owned run/workflow references, raw event envelopes, nullable ordered-descriptor checkpoints, append-only audit records, and deduplicated outbox operations. Event payloads remain JSON without inferred simulator fields. Checkpoint positions have no numeric consecutiveness constraint. The initial Alembic migration was applied and rerun against the isolated PostgreSQL test database; one version row remained and `alembic check` found no schema drift.
 
@@ -135,7 +135,7 @@ Chunk 2 commits (created incrementally; none pushed):
 - `2443889 feat(storage): add async database store`
 - `31af0ea feat(storage): persist raw events idempotently`
 - `a3d7a6b feat(storage): add checkpoint audit and outbox operations`
-- `PENDING feat: add durable event and audit store`
+- `e88ed27 feat: add durable event and audit store`
 
 Do not rewrite prior history.
 
