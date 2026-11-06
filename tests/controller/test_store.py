@@ -1,18 +1,22 @@
+import os
+
 import pytest
+from sqlalchemy import text
 
 from controller.audit import AuditEntry, AuditLog
 from controller.store import (
     CheckpointRegressionError,
+    DatabaseStore,
     EventConflictError,
     EventRecord,
     OutboxConflictError,
 )
 
 
-def _event(event_id, *, payload=None):
+def _event(event_id, *, chunk_number=81, payload=None):
     return EventRecord(
         event_id=event_id,
-        chunk_number=81,
+        chunk_number=chunk_number,
         kind="events",
         payload=payload or {"event_id": event_id, "opaque": {"value": "kept"}},
     )
@@ -55,10 +59,19 @@ async def test_chunk_rows_and_ordered_descriptor_checkpoint_commit_together(
     postgres_store,
 ):
     store = postgres_store
-    inserted = await store.commit_chunk("events", 17, [_event(920003)])
+    inserted = await store.commit_chunk("events", 17, [_event(920003, chunk_number=17)])
     assert inserted == (920003,)
     assert await store.get_checkpoint("events") == 17
     assert await store.get_event(920003) is not None
+
+
+@pytest.mark.anyio
+async def test_chunk_commit_rejects_rows_for_a_different_descriptor(postgres_store):
+    store = postgres_store
+    with pytest.raises(ValueError, match="match the checkpoint chunk"):
+        await store.commit_chunk("events", 17, [_event(920013, chunk_number=18)])
+    assert await store.get_event(920013) is None
+    assert await store.get_checkpoint("events") is None
 
 
 @pytest.mark.anyio
@@ -73,8 +86,12 @@ async def test_failed_event_write_cannot_advance_checkpoint(postgres_store):
             "events",
             18,
             [
-                _event(920005),
-                _event(existing.event_id, payload={"different": True}),
+                _event(920005, chunk_number=18),
+                _event(
+                    existing.event_id,
+                    chunk_number=18,
+                    payload={"different": True},
+                ),
             ],
         )
 
@@ -89,7 +106,7 @@ async def test_exception_rolls_back_event_and_checkpoint_as_one_transaction(
     store = postgres_store
     with pytest.raises(RuntimeError, match="injected failure"):
         async with store.transaction() as session:
-            await store.insert_events(session, [_event(920006)])
+            await store.insert_events(session, [_event(920006, chunk_number=19)])
             await store.advance_checkpoint(session, "events", 19)
             raise RuntimeError("injected failure")
 
@@ -102,10 +119,10 @@ async def test_checkpoint_rejects_regression_and_rolls_back_associated_event(
     postgres_store,
 ):
     store = postgres_store
-    await store.commit_chunk("history", 20, [_event(920007)])
+    await store.commit_chunk("history", 20, [_event(920007, chunk_number=20)])
 
     with pytest.raises(CheckpointRegressionError):
-        await store.commit_chunk("history", 19, [_event(920008)])
+        await store.commit_chunk("history", 19, [_event(920008, chunk_number=19)])
 
     assert await store.get_checkpoint("history") == 20
     assert await store.get_event(920008) is None
@@ -165,3 +182,73 @@ async def test_outbox_deduplicates_stable_key_and_tracks_attempts(postgres_store
                 dedupe_key="operation-test-1",
                 payload={"opaque": True},
             )
+
+
+@pytest.mark.anyio
+async def test_run_record_persists_and_finishes_within_transaction(postgres_store):
+    store = postgres_store
+    async with store.transaction() as session:
+        run_id = await store.create_run(session, {"mode": "test"})
+        assert await store.finish_run(session, run_id, "succeeded")
+
+    run = await store.get_run(run_id)
+    assert run is not None
+    assert run.status == "succeeded"
+    assert run.details == {"mode": "test"}
+    assert run.finished_at is not None
+
+
+@pytest.mark.anyio
+async def test_committed_state_survives_store_reopen_and_migrations_repeat(
+    postgres_store,
+):
+    store = postgres_store
+    event = _event(920009, chunk_number=27)
+    await store.commit_chunk("reopen-test", 27, [event])
+    audit = AuditLog(store)
+    audit_id = await audit.record(
+        AuditEntry(
+            action="restart_evidence",
+            actor="controller",
+            reason="committed before closing the first store",
+            workflow_id="workflow-reopen-test",
+        )
+    )
+    async with store.transaction() as session:
+        outbox = await store.create_outbox_operation(
+            session,
+            operation_type="reopen_test",
+            dedupe_key="reopen-test-operation",
+            payload={"kept": True},
+        )
+        run_id = await store.create_run(session, {"purpose": "restart-test"})
+        await store.finish_run(session, run_id, "interrupted")
+
+    database_url = os.environ["CONTROLLER_TEST_DATABASE_URL"]
+    await store.close()
+    reopened = DatabaseStore(database_url)
+    try:
+        await reopened.initialize()
+        await reopened.migrate()
+        await reopened.migrate()
+        assert await reopened.get_event(event.event_id) is not None
+        assert await reopened.get_checkpoint("reopen-test") == 27
+        stored_outbox = await reopened.get_outbox_operation("reopen-test-operation")
+        assert stored_outbox is not None
+        assert stored_outbox.id == outbox.id
+        reopened_run = await reopened.get_run(run_id)
+        assert reopened_run is not None
+        assert reopened_run.status == "interrupted"
+        rows = await AuditLog(reopened).list_for_workflow("workflow-reopen-test")
+        assert [row.id for row in rows] == [audit_id]
+        async with reopened.transaction() as session:
+            versions = await session.scalar(
+                text("SELECT count(*) FROM alembic_version")
+            )
+            revision = await session.scalar(
+                text("SELECT version_num FROM alembic_version")
+            )
+        assert versions == 1
+        assert revision == "0001_durable_store"
+    finally:
+        await reopened.close()

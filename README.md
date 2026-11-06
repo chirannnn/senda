@@ -99,6 +99,19 @@ This runtime foundation does not yet persist events or advance intents and does 
 governance decisions. Those are implemented in later plan chunks; do not treat Chunk 1 alone as the completed
 assessment controller.
 
+### Durable storage (Chunk 2)
+
+The async store uses `CONTROLLER_DATABASE_URL` in SQLAlchemy's `postgresql+asyncpg://...` form. Set it only in
+the current process environment using the local development credentials stored outside the repository or a
+database connection explicitly supplied for the assessment. Do not put the URL in source, `.env` files under
+version control, command output, or logs. `DatabaseStore.initialize()` checks connectivity and
+`DatabaseStore.migrate()` applies the checked-in Alembic revisions; migrations do not run automatically from
+the Chunk 1 launcher. For manual migration work, set the environment variable in the shell and run
+`python -m alembic -c alembic.ini upgrade head` with the project virtual environment's Python on Windows or
+Linux. Storage is not yet wired into controller execution; Chunk 3 will connect it to event
+ingestion. Store integration tests require `CONTROLLER_TEST_DATABASE_URL` to point at a disposable PostgreSQL
+database.
+
 **Ground rules for the simulator**
 - Your controller may only know what the HTTP API tells it. Reading `runs/`, importing `sim`, or parsing
   scenario files (including fields like `base_pickup` or `did_base_health`, which the API never returns) is

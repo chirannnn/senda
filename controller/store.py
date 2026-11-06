@@ -26,6 +26,7 @@ from sqlalchemy.ext.asyncio import (
 
 from controller.errors import ConfigurationError
 from controller.schema import (
+    ControllerRun,
     OutboxOperation,
     ProcessingCheckpoint,
     SimulatorEvent,
@@ -189,6 +190,36 @@ class DatabaseStore:
         async with self._sessions() as session:
             return await session.get(SimulatorEvent, event_id)
 
+    async def create_run(
+        self, session: AsyncSession, details: dict[str, object] | None = None
+    ) -> UUID:
+        """Create a controller process attempt inside the caller's transaction."""
+        self.require_transaction(session)
+        run = ControllerRun(details=details or {})
+        session.add(run)
+        await session.flush()
+        return run.id
+
+    async def finish_run(
+        self, session: AsyncSession, run_id: UUID, status: str
+    ) -> bool:
+        """Mark a run terminal; the database constraint validates supported states."""
+        self.require_transaction(session)
+        if status not in {"succeeded", "failed", "interrupted"}:
+            raise ValueError("run status must be succeeded, failed, or interrupted")
+        run = await session.get(ControllerRun, run_id)
+        if run is None:
+            return False
+        run.status = status
+        run.finished_at = datetime.now(UTC)
+        await session.flush()
+        return True
+
+    async def get_run(self, run_id: UUID) -> ControllerRun | None:
+        self._ensure_open()
+        async with self._sessions() as session:
+            return await session.get(ControllerRun, run_id)
+
     async def ensure_workflow(self, session: AsyncSession, workflow_id: str) -> None:
         """Create or refresh a local reference without copying workflow config."""
         self.require_transaction(session)
@@ -252,6 +283,8 @@ class DatabaseStore:
         This is a storage primitive only: it does not fetch, parse, or dispatch
         simulator events. Any failed insert or checkpoint update rolls back both.
         """
+        if any(event.chunk_number != chunk_number for event in events):
+            raise ValueError("every event must match the checkpoint chunk number")
         async with self.transaction() as session:
             inserted_ids = await self.insert_events(session, events)
             await self.advance_checkpoint(session, checkpoint_key, chunk_number)

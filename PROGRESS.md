@@ -1,17 +1,17 @@
 # Progress Tracking — Outcome-First Agent Loop
 
-## Overall status: IN PROGRESS — CHUNK 2
+## Overall status: COMPLETE — CHUNK 2
 
-**Current phase:** Chunk 2 implementation
+**Current phase:** Chunk 2 complete; awaiting review
 **Current chunk:** 2 — Durable schema and audit
-**Current next action:** Complete Chunk 2 subtasks and verify against PostgreSQL.
+**Current next action:** Chunk 3 — Chunk ingestion.
 
 ## Implementation progress
 
 | Chunk | Name | Status | Commit |
 |---|---|---|---|
 | 1 | Runtime and launcher | COMPLETE | `cfc28d2`, `730cf26`, `71bdd8a` (and earlier foundation/config commits listed below) |
-| 2 | Durable schema and audit | IN PROGRESS | — |
+| 2 | Durable schema and audit | COMPLETE | `aab9708`, `2443889`, `31af0ea`, `a3d7a6b`, `PENDING` final acceptance commit |
 | 3 | Simulator chunk ingestion | NOT STARTED | — |
 | 4 | History, KPI facts, audit query | NOT STARTED | — |
 | 5 | Governance lifecycle | NOT STARTED | — |
@@ -30,7 +30,7 @@
 - Generated development-only credentials are stored outside the repository at `%LOCALAPPDATA%\FormiAgenticUniverse\postgres-dev.env`; credential values were not displayed. Compose config validation passed.
 - Container became healthy. Async SQLAlchemy connection succeeded against PostgreSQL **18.6**. A temporary row was written, the container was restarted, and the row was read back successfully. Temporary probe table was then removed. Volume mount inspected and confirmed.
 - `requirements.txt` now includes `SQLAlchemy[asyncio]`, Alembic and asyncpg so the selected database driver/async support is reproducible. No assessment database connection was specified in the assignment materials or configured in the inspected environment.
-- Chunk 1 is complete. Chunk 2 is now in progress; no event ingestion or later-chunk behavior has started.
+- Chunk 1 and Chunk 2 are complete. Chunk 3 event ingestion and later behavior have not started.
 
 ## Chunk 1 subtask progress
 
@@ -48,17 +48,28 @@
 |---|---|---|---|
 | 1. Versioned database schema and initial Alembic revision | COMPLETE | 4 schema metadata tests passed; Ruff and compile checks passed; `alembic history` lists initial revision | `aab9708 feat(storage): add versioned durable schema` |
 | 2. Async database store and configuration | COMPLETE | 6 configuration/lifecycle unit tests passed; Ruff and compile checks passed | `2443889 feat(storage): add async database store` |
-| 3. Event uniqueness and atomic persistence primitives | COMPLETE | PostgreSQL insert/read, duplicate no-op, and conflicting replay tests passed; 12 schema/store tests passed | `feat(storage): persist raw events idempotently` |
-| 4. Checkpoint, audit and outbox operations | COMPLETE | 8 PostgreSQL store tests passed, including atomic chunk/checkpoint writes, rollback, regression rejection, audit and outbox persistence | `feat(storage): add checkpoint audit and outbox operations` |
-| 5. PostgreSQL failure/restart and migration verification | NOT STARTED | — | — |
+| 3. Event uniqueness and atomic persistence primitives | COMPLETE | PostgreSQL insert/read, duplicate no-op, and conflicting replay tests passed; 12 schema/store tests passed | `31af0ea feat(storage): persist raw events idempotently` |
+| 4. Checkpoint, audit and outbox operations | COMPLETE | PostgreSQL store tests passed, including atomic chunk/checkpoint writes, rollback, regression rejection, audit and outbox persistence | `a3d7a6b feat(storage): add checkpoint audit and outbox operations` |
+| 5. PostgreSQL failure/restart and migration verification | COMPLETE | `tests/controller/test_store.py`: 11 passed; full suite: 63 passed; repeat migrations and Alembic schema check passed; Ruff and compile checks passed | `feat: add durable event and audit store` |
 
-Subtask 1 defines controller-owned run/workflow references, raw event envelopes, nullable ordered-descriptor checkpoints, append-only audit records, and deduplicated outbox operations. Event payloads remain JSON without inferred simulator fields. Checkpoint positions have no numeric consecutiveness constraint. The initial Alembic migration is present and has been applied to the isolated PostgreSQL test database; explicit repeat-migration verification remains in subtask 5.
+Subtask 1 defines controller-owned run/workflow references, raw event envelopes, nullable ordered-descriptor checkpoints, append-only audit records, and deduplicated outbox operations. Event payloads remain JSON without inferred simulator fields. Checkpoint positions have no numeric consecutiveness constraint. The initial Alembic migration was applied and rerun against the isolated PostgreSQL test database; one version row remained and `alembic check` found no schema drift.
 
 Subtask 2 adds `DatabaseStore`, which reads `CONTROLLER_DATABASE_URL` separately from simulator settings, accepts only `postgresql+asyncpg`, uses a bounded pre-ping pool with SQL parameter hiding, exposes explicit transaction scopes, verifies connectivity, applies Alembic revisions, and disposes connections on close. Configuration and lifecycle tests pass. The test database was verified using an isolated temporary PostgreSQL instance; the configured Compose database remains unavailable because Docker Engine is stopped, and the host PostgreSQL service rejects the external Compose credentials.
 
 Subtask 3 adds `EventRecord`, transactional PostgreSQL insert-on-conflict handling, and a read-by-ID operation. The method returns only IDs actually inserted so future derived effects can be limited to new events; a repeated ID with different payload, kind, or chunk raises an error. Integration tests passed against a temporary loopback-only PostgreSQL 18 database initialized outside the repository. Docker and the host database were not modified.
 
 Subtask 4 adds monotonic descriptor checkpoint writes, an atomic raw-event-plus-checkpoint helper, append-only audit writes/queries, and deduplicated outbox creation/status updates. Both audit and outbox records can be related to workflow references. External API calls are not executed. Transaction failure, conflicting event data, and checkpoint regression leave associated data/checkpoints unchanged in PostgreSQL tests.
+
+Subtask 5 verified database initialization, migration application and repeat application against PostgreSQL 18. A fresh `DatabaseStore` instance reopened the database and read committed raw event, checkpoint, audit, outbox and run records. The `alembic_version` table retained one row at `0001_durable_store`; `alembic check` reported no new upgrade operations. Injected transaction exceptions and event/checkpoint failures rolled back their related writes. The isolated test PostgreSQL process was stopped after validation; its data directory remains outside the repository under the system temporary directory. The configured Docker Compose database was not available in this session.
+
+### Chunk 2 files and implementation
+
+- Added `controller/schema.py` with controller run, workflow reference, raw event, processing checkpoint, audit and outbox tables; raw simulator payloads are JSON and no event fields beyond ID, descriptor chunk and kind are projected.
+- Added Alembic configuration, async environment and initial revision `0001_durable_store`.
+- Added `controller/store.py` for environment-supplied async PostgreSQL connections, migration, transactions, idempotent raw-event insertion, atomic event/checkpoint commits, run/workflow/checkpoint methods and outbox persistence/status.
+- Added `controller/audit.py` for append-only audit writes and workflow queries.
+- Added PostgreSQL integration fixtures/tests under `tests/controller/`.
+- Updated `.gitignore` for local environment files and SQLite files. No dependency changes were needed.
 
 The Chunk 1 runtime is a foundation only. It does not yet persist events or advance intents and does not make optimization or governance decisions. It halts on ambiguous advance outcomes rather than issuing a duplicate POST; durable reconciliation is required in the later persistence/recovery chunks. Public simulator scenarios were not run as part of Chunk 1.
 
@@ -72,6 +83,8 @@ Subtask 4 starts the simulator through documented readiness/state/workflow reads
 | public_02_incidents | NOT RUN | — |
 | public_03_load | NOT RUN | — |
 | Crash recovery | NOT RUN | — |
+
+Chunk 2 verification used `CONTROLLER_TEST_DATABASE_URL` for an isolated PostgreSQL 18 test database outside the repository. `python -m pytest -q tests/controller/test_store.py` — **11 passed**. `python -m pytest -q` — **63 passed** with PostgreSQL integration tests enabled. `ruff check controller tests/controller tests/unit migrations`, `ruff format --check controller tests/controller tests/unit migrations`, `python -m compileall -q controller tests migrations`, `alembic check`, and `git diff --check` passed. No assessment scenario was run.
 
 Chunk 1 runtime and launcher tests use fakes/HTTPX mock transport and do not require the assessment simulator or Docker. No full assessment scenario, load run, crash-recovery demonstration, or type checker run has been performed. Ruff initially found a pre-existing import-order issue in `tests/test_sim.py`; that simulator contract test file was left unchanged. Ruff check and format succeeded for the controller and `tests/unit`.
 
@@ -95,7 +108,7 @@ No assessment scenario or full end-to-end run has been performed yet. Chunk 1 un
 - README says any language/storage and does not require or document an assessment-provided database or pin a Python version. Python 3.12 grammar parsing succeeded for six inspected assessment/runtime source files, and Python 3.12.10 is now installed in `.venv`.
 - The pre-existing host PostgreSQL 18 service on port 5432 was not used for development. Local development uses the verified Compose-managed PostgreSQL 18.6 instance on port 5433.
 - The Compose-managed DB authenticated through async SQLAlchemy. Named-volume data survived a container restart. Credentials are in the external local env file, not source control.
-- Docker Desktop/Engine is running for this local setup; it is not assumed available in the grading environment.
+- Docker Desktop/Engine was verified running during the earlier Compose setup. During Chunk 2 it was stopped, so tests used a temporary PostgreSQL 18 instance and did not start or alter the Compose database. Docker is not assumed available in grading.
 - No scenario truth or run-directory data may be controller input; use HTTP only.
 
 ## Unverified assumptions and open risks
@@ -116,8 +129,16 @@ Chunk 1 commits (created incrementally; none pushed):
 - `730cf26 feat(runtime): add readiness and graceful advance loop`
 - `71bdd8a feat(cli): add virtualenv launcher and runtime documentation`
 
+Chunk 2 commits (created incrementally; none pushed):
+
+- `aab9708 feat(storage): add versioned durable schema`
+- `2443889 feat(storage): add async database store`
+- `31af0ea feat(storage): persist raw events idempotently`
+- `a3d7a6b feat(storage): add checkpoint audit and outbox operations`
+- `PENDING feat: add durable event and audit store`
+
 Do not rewrite prior history.
 
 ## Next action
 
-Chunk 1 is complete. Wait for explicit user approval before Chunk 2.
+Chunk 2 is complete. Next: Chunk 3 — Chunk ingestion. Chunk 3 has not started.
