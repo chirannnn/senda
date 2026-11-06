@@ -2,9 +2,9 @@
 
 ## Overall status: IN PROGRESS — CHUNK 3
 
-**Current phase:** Repository structure refactor complete; Chunks 1–2 remain complete
+**Current phase:** Chunk 3 reliable event ingestion
 **Current chunk:** 3 — Reliable event ingestion
-**Current next action:** Chunk 3 — Chunk ingestion.
+**Current next action:** Chunk 3 subtask 6 — hardening and final verification.
 
 ## Implementation progress
 
@@ -28,8 +28,8 @@
 | 1. Ingestion foundation | COMPLETE | `.venv/Scripts/python.exe -m pytest -q tests/unit/ingestion/` — 13 passed; Ruff check/format and `git diff --check` passed | `d921490` |
 | 2. Historical ingestion | COMPLETE | `.venv/Scripts/python.exe -m pytest -q tests/unit/ingestion/ tests/unit/test_simulator_client.py` — 25 passed; Ruff check/format and `git diff --check` passed | `b6b88f6` |
 | 3. Transactional persistence | COMPLETE | PostgreSQL integration plus storage regression tests — 14 passed; Ruff check/format and `git diff --check` passed | `6bdce40` |
-| 4. Live ingestion | COMPLETE | Focused unit/runtime and PostgreSQL storage/ingestion checks — 40 passed; one live POST persisted two events through checkpoint 7 and completed its outbox intent; Ruff and format passed | pending |
-| 5. Crash recovery | IN PROGRESS | Pending ambiguous advance/restart reconciliation tests | — |
+| 4. Live ingestion | COMPLETE | Focused unit/runtime and PostgreSQL storage/ingestion checks — 40 passed; one live POST persisted two events through checkpoint 7 and completed its outbox intent; Ruff and format passed | `f975203` |
+| 5. Crash recovery | COMPLETE | Focused parser/runtime and PostgreSQL recovery suite — 29 passed; timeout-after-apply recovered without another POST; unchanged state plus empty listing allowed one persisted retry; API outage made no retry | pending |
 | 6. Hardening | NOT STARTED | — | — |
 
 ## Environment setup results (2026-11-06)
@@ -161,4 +161,4 @@ Do not rewrite prior history.
 
 ## Next action
 
-Chunk 2 and the repository structure refactor are complete. Chunk 3 subtasks 1–4 are complete; subtask 5 (crash recovery) is in progress. Subtask 6 has not started.
+Chunk 2 and the repository structure refactor are complete. Chunk 3 subtasks 1–5 are complete; subtask 6 (hardening and final verification) is next.

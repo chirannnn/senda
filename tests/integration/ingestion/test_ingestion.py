@@ -1,11 +1,19 @@
+import os
+
 import httpx
 import pytest
 
 from controller.clients.simulator import SimulatorClient
 from controller.config import Settings
+from controller.errors import AmbiguousPostError, SimulatorError
 from controller.ingestion.events import EventValidationError
-from controller.ingestion.runner import ADVANCE_OPERATION, advance_and_ingest
+from controller.ingestion.runner import (
+    ADVANCE_OPERATION,
+    advance_and_ingest,
+    reconcile_pending_advances,
+)
 from controller.ingestion.service import EventIngestionService
+from controller.storage.store import DatabaseStore
 
 
 def _descriptor(chunk, kind, first, last):
@@ -224,3 +232,209 @@ async def test_live_advance_persists_intent_then_ingests_returned_chunks(
     assert intents[0].attempts == 1
     assert intents[0].payload["before"]["sim_minute"] == 0
     assert intents[0].payload["response"]["new_chunks"] == [descriptor]
+
+
+@pytest.mark.anyio
+async def test_restart_reconciles_advance_that_applied_before_response_was_lost(
+    postgres_store,
+):
+    descriptor = _descriptor(12, "events", 201, 205)
+    state = {
+        "sim_minute": 0,
+        "ts": "D0 00:00",
+        "finished": False,
+        "chunks": 0,
+        "last_event_id": 0,
+    }
+    applied = False
+    post_count = 0
+
+    def handler(request):
+        nonlocal applied, post_count
+        if request.url.path == "/events/chunks":
+            kind = request.url.params["kind"]
+            items = [descriptor] if applied and kind == "events" else []
+            return httpx.Response(200, json=items)
+        if request.url.path == "/sim/state":
+            return httpx.Response(200, json=state)
+        if request.url.path == "/sim/advance":
+            post_count += 1
+            applied = True
+            state.update(
+                sim_minute=15,
+                ts="D0 00:15",
+                chunks=1,
+                last_event_id=205,
+            )
+            raise httpx.ReadTimeout("response lost after application", request=request)
+        return httpx.Response(
+            200,
+            content=_body(
+                {"event_id": 201, "type": "call"},
+                {"event_id": 205, "type": "call"},
+            ),
+        )
+
+    client = SimulatorClient(
+        Settings("http://simulator.test"), transport=httpx.MockTransport(handler)
+    )
+    async with client:
+        with pytest.raises(AmbiguousPostError):
+            await advance_and_ingest(client, postgres_store, 15)
+
+    # A fresh store instance represents a controller process restart.
+    database_url = os.environ["CONTROLLER_TEST_DATABASE_URL"]
+    await postgres_store.close()
+    restarted_store = DatabaseStore(database_url)
+    await restarted_store.initialize()
+    try:
+        recovery_client = SimulatorClient(
+            Settings("http://simulator.test"),
+            transport=httpx.MockTransport(handler),
+        )
+        async with recovery_client:
+            outcomes = await reconcile_pending_advances(
+                recovery_client, restarted_store
+            )
+
+        assert post_count == 1
+        assert len(outcomes) == 1 and outcomes[0].finished is False
+        assert await restarted_store.get_checkpoint("simulator") == 12
+        assert await restarted_store.get_event(201) is not None
+        assert await restarted_store.get_event(205) is not None
+        intents = await restarted_store.list_outbox_operations(ADVANCE_OPERATION)
+        assert len(intents) == 1 and intents[0].status == "succeeded"
+        assert (
+            intents[0].payload["reconciliation"]["result"]
+            == "simulator_progress_observed"
+        )
+    finally:
+        await restarted_store.close()
+
+
+@pytest.mark.anyio
+async def test_ambiguous_advance_retries_only_after_state_and_descriptors_prove_no_progress(
+    postgres_store,
+):
+    descriptor = _descriptor(5, "events", 301, 303)
+    state = {
+        "sim_minute": 0,
+        "ts": "D0 00:00",
+        "finished": False,
+        "chunks": 0,
+        "last_event_id": 0,
+    }
+    post_count = 0
+    requests = []
+
+    def handler(request):
+        nonlocal post_count
+        requests.append((request.method, request.url.path))
+        if request.url.path == "/events/chunks":
+            return httpx.Response(200, json=[])
+        if request.url.path == "/sim/state":
+            return httpx.Response(200, json=state)
+        if request.url.path == "/sim/advance":
+            post_count += 1
+            if post_count == 1:
+                raise httpx.ReadTimeout("request outcome unclear", request=request)
+            state.update(
+                sim_minute=15,
+                ts="D0 00:15",
+                chunks=1,
+                last_event_id=303,
+            )
+            return httpx.Response(
+                200,
+                json={
+                    **state,
+                    "new_chunks": [descriptor],
+                },
+            )
+        return httpx.Response(
+            200,
+            content=_body(
+                {"event_id": 301, "type": "call"},
+                {"event_id": 303, "type": "call"},
+            ),
+        )
+
+    client = SimulatorClient(
+        Settings("http://simulator.test"), transport=httpx.MockTransport(handler)
+    )
+    async with client:
+        with pytest.raises(AmbiguousPostError):
+            await advance_and_ingest(client, postgres_store, 15)
+
+    await postgres_store.close()
+    restarted_store = DatabaseStore(os.environ["CONTROLLER_TEST_DATABASE_URL"])
+    await restarted_store.initialize()
+    try:
+        recovery_client = SimulatorClient(
+            Settings("http://simulator.test"),
+            transport=httpx.MockTransport(handler),
+        )
+        async with recovery_client:
+            outcomes = await reconcile_pending_advances(
+                recovery_client, restarted_store
+            )
+
+        assert len(outcomes) == 1 and outcomes[0].finished is False
+        assert post_count == 2
+        second_post = [
+            i for i, item in enumerate(requests) if item == ("POST", "/sim/advance")
+        ][1]
+        state_read_before_retry = max(
+            i
+            for i, item in enumerate(requests[:second_post])
+            if item == ("GET", "/sim/state")
+        )
+        assert state_read_before_retry < second_post
+        assert await restarted_store.get_checkpoint("simulator") == 5
+        intents = await restarted_store.list_outbox_operations(ADVANCE_OPERATION)
+        assert intents[0].attempts == 2 and intents[0].status == "succeeded"
+    finally:
+        await restarted_store.close()
+
+
+@pytest.mark.anyio
+async def test_unavailable_reconciliation_get_never_retries_advance(postgres_store):
+    state = {
+        "sim_minute": 0,
+        "ts": "D0 00:00",
+        "finished": False,
+        "chunks": 0,
+        "last_event_id": 0,
+    }
+    post_count = 0
+    fail_state = False
+
+    def handler(request):
+        nonlocal post_count
+        if request.url.path == "/events/chunks":
+            return httpx.Response(200, json=[])
+        if request.url.path == "/sim/state":
+            if fail_state:
+                raise httpx.ConnectError("unavailable", request=request)
+            return httpx.Response(200, json=state)
+        if request.url.path == "/sim/advance":
+            post_count += 1
+            raise httpx.ReadTimeout("ambiguous", request=request)
+
+    settings = Settings("http://simulator.test", get_retries=0)
+    first = SimulatorClient(settings, transport=httpx.MockTransport(handler))
+    async with first:
+        with pytest.raises(AmbiguousPostError):
+            await advance_and_ingest(first, postgres_store, 15)
+
+    fail_state = True
+    recovery = SimulatorClient(settings, transport=httpx.MockTransport(handler))
+    async with recovery:
+        with pytest.raises(SimulatorError):
+            await reconcile_pending_advances(recovery, postgres_store)
+
+    assert post_count == 1
+    unresolved = await postgres_store.list_outbox_operations(
+        ADVANCE_OPERATION, statuses=("in_progress",)
+    )
+    assert len(unresolved) == 1

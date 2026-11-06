@@ -13,7 +13,10 @@ from typing import Any, Protocol
 
 from controller.config import Settings
 from controller.errors import AmbiguousPostError, SimulatorError, SimulatorHTTPError
-from controller.ingestion.runner import advance_and_ingest
+from controller.ingestion.runner import (
+    advance_and_ingest,
+    reconcile_pending_advances,
+)
 from controller.ingestion.service import EventIngestionService
 from controller.storage.store import DatabaseStore
 
@@ -57,6 +60,8 @@ async def run_controller(
     ingestion = EventIngestionService(simulator) if store is not None else None
     if store is not None and ingestion is not None:
         await ingestion.ingest_available_chunks(store)
+        await reconcile_pending_advances(simulator, store, service=ingestion)
+        state = await simulator.get_state()
     if _is_finished(state):
         return RuntimeOutcome(completed=True, stopped=False)
 

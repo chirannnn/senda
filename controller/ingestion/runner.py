@@ -1,4 +1,4 @@
-"""One durable live advance and its returned event chunks."""
+"""Durable live advances and restart reconciliation."""
 
 from __future__ import annotations
 
@@ -7,7 +7,11 @@ from typing import Any
 from uuid import uuid4
 
 from controller.clients.simulator import SimulatorClient
-from controller.errors import SimulatorError, SimulatorHTTPError
+from controller.errors import (
+    AmbiguousPostError,
+    SimulatorError,
+    SimulatorHTTPError,
+)
 from controller.ingestion.events import EventValidationError
 from controller.ingestion.parser import parse_descriptors
 from controller.ingestion.service import EventIngestionService
@@ -15,6 +19,7 @@ from controller.storage.store import DatabaseStore
 
 ADVANCE_OPERATION = "simulator_advance"
 CHECKPOINT_KEY = "simulator"
+UNRESOLVED_STATUSES = ("pending", "in_progress", "reconciliation_required")
 
 
 @dataclass(frozen=True, slots=True)
@@ -28,6 +33,10 @@ class AdvanceOutcome:
     intent_key: str
 
 
+class AdvanceReconciliationError(SimulatorError):
+    """Remote advance state conflicts with the durable pre-request intent."""
+
+
 async def advance_and_ingest(
     simulator: SimulatorClient,
     store: DatabaseStore,
@@ -37,15 +46,146 @@ async def advance_and_ingest(
 ) -> AdvanceOutcome:
     """Persist intent, issue one advance POST, persist descriptors, then ingest."""
     ingestion = service or EventIngestionService(simulator)
-    # Catch up before moving the simulator so a newly committed cursor can never
-    # jump over an already-published descriptor.
+    pending = await store.list_outbox_operations(
+        ADVANCE_OPERATION, statuses=UNRESOLVED_STATUSES
+    )
+    if pending:
+        raise AdvanceReconciliationError(
+            "an earlier advance intent must be reconciled before another POST"
+        )
     await ingestion.ingest_available_chunks(store, checkpoint_key=CHECKPOINT_KEY)
     before = _state_snapshot(await simulator.get_state())
     intent_key = f"advance-intent:{uuid4()}"
-    payload: dict[str, Any] = {
-        "requested_minutes": minutes,
-        "before": before,
-    }
+    payload: dict[str, Any] = {"requested_minutes": minutes, "before": before}
+    operation_id = await _create_intent(store, intent_key, payload)
+    return await _perform_intent(
+        simulator, store, ingestion, intent_key, operation_id, payload, minutes
+    )
+
+
+async def reconcile_pending_advances(
+    simulator: SimulatorClient,
+    store: DatabaseStore,
+    *,
+    service: EventIngestionService | None = None,
+) -> tuple[AdvanceOutcome, ...]:
+    """Resolve durable advance intents before allowing another simulated tick.
+
+    An unchanged state and empty post-checkpoint descriptor listing proves that
+    the synchronous advance made no visible progress. Only then is the same
+    intent eligible for one new POST. Any conflicting or unavailable evidence
+    fails closed.
+    """
+    ingestion = service or EventIngestionService(simulator)
+    operations = await store.list_outbox_operations(
+        ADVANCE_OPERATION, statuses=UNRESOLVED_STATUSES
+    )
+    outcomes: list[AdvanceOutcome] = []
+    for operation in operations:
+        if operation.status == "reconciliation_required":
+            raise AdvanceReconciliationError(
+                f"advance intent {operation.dedupe_key} requires operator reconciliation"
+            )
+        payload = operation.payload
+        before_raw = payload.get("before")
+        if not isinstance(before_raw, dict):
+            await _set_intent(
+                store,
+                operation.dedupe_key,
+                "reconciliation_required",
+                payload | {"reconciliation_error": "missing pre-request state"},
+            )
+            raise AdvanceReconciliationError("advance intent lacks pre-request state")
+        before = _state_snapshot(before_raw)
+        current = _state_snapshot(await simulator.get_state())
+        chunks, events = await ingestion.ingest_available_chunks(
+            store, checkpoint_key=CHECKPOINT_KEY
+        )
+        progressed = _has_progress(before, current)
+        unchanged = before == current and chunks == 0 and events == 0
+        if progressed:
+            reconciled_payload = payload | {
+                "reconciliation": {
+                    "result": "simulator_progress_observed",
+                    "state": current,
+                    "recovered_chunks": chunks,
+                    "recovered_events": events,
+                }
+            }
+            await _finish_intent(store, operation.dedupe_key, reconciled_payload)
+            outcomes.append(
+                AdvanceOutcome(
+                    finished=current["finished"],
+                    simulated_time=current["ts"],
+                    chunks_committed=chunks,
+                    events_inserted=events,
+                    intent_key=operation.dedupe_key,
+                )
+            )
+            continue
+        if not unchanged:
+            conflict_payload = payload | {
+                "reconciliation": {
+                    "result": "state_conflict",
+                    "before": before,
+                    "current": current,
+                    "recovered_chunks": chunks,
+                    "recovered_events": events,
+                }
+            }
+            await _set_intent(
+                store,
+                operation.dedupe_key,
+                "reconciliation_required",
+                conflict_payload,
+            )
+            raise AdvanceReconciliationError(
+                f"advance intent {operation.dedupe_key} has conflicting remote state"
+            )
+
+        minutes = payload.get("requested_minutes")
+        if isinstance(minutes, bool) or not isinstance(minutes, int):
+            await _set_intent(
+                store,
+                operation.dedupe_key,
+                "reconciliation_required",
+                payload | {"reconciliation_error": "invalid requested minutes"},
+            )
+            raise AdvanceReconciliationError(
+                "advance intent lacks valid requested minutes"
+            )
+        retry_payload = payload | {
+            "reconciliation": {
+                "result": "no_progress_proven",
+                "state": current,
+                "recovered_chunks": chunks,
+                "recovered_events": events,
+            }
+        }
+        await _set_intent(
+            store,
+            operation.dedupe_key,
+            "in_progress",
+            retry_payload,
+            increment_attempts=True,
+        )
+        outcomes.append(
+            await _perform_intent(
+                simulator,
+                store,
+                ingestion,
+                operation.dedupe_key,
+                operation.id,
+                retry_payload,
+                minutes,
+            )
+        )
+    return tuple(outcomes)
+
+
+async def _create_intent(
+    store: DatabaseStore, intent_key: str, payload: dict[str, Any]
+):
     async with store.transaction() as session:
         operation = await store.create_outbox_operation(
             session,
@@ -59,15 +199,38 @@ async def advance_and_ingest(
             "in_progress",
             increment_attempts=True,
         )
+    return operation.id
 
+
+async def _perform_intent(
+    simulator: SimulatorClient,
+    store: DatabaseStore,
+    ingestion: EventIngestionService,
+    intent_key: str,
+    operation_id: Any,
+    payload: dict[str, Any],
+    minutes: int,
+) -> AdvanceOutcome:
     try:
         response = await simulator.advance(minutes)
+    except AmbiguousPostError:
+        # Leave the durable intent unresolved; startup reconciliation owns it.
+        raise
     except SimulatorHTTPError as exc:
         if exc.status_code == 409 and exc.path == "/sim/advance":
             state = _state_snapshot(await simulator.get_state())
             if state["finished"]:
-                await _finish_intent(store, intent_key, payload | {"observed": state})
+                observed = payload | {
+                    "reconciliation": {"result": "already_finished", "state": state}
+                }
+                await _finish_intent(store, intent_key, observed)
                 return AdvanceOutcome(True, state["ts"], 0, 0, intent_key)
+        await _set_intent(
+            store,
+            intent_key,
+            "failed",
+            payload | {"response_error_status": exc.status_code},
+        )
         raise
 
     if not isinstance(response.get("new_chunks"), list):
@@ -94,12 +257,10 @@ async def advance_and_ingest(
             "new_chunks": [item.metadata for item in descriptors],
         }
     }
-    await _save_intent_payload(store, intent_key, payload)
+    await _set_intent(store, intent_key, "in_progress", payload)
     committed, inserted = await ingestion.ingest_descriptors(
         store, descriptors, checkpoint_key=CHECKPOINT_KEY
     )
-    # Re-list both streams to catch API-published descriptors omitted by a stale
-    # or incomplete advance response before marking the intent complete.
     recovered_chunks, recovered_events = await ingestion.ingest_available_chunks(
         store, checkpoint_key=CHECKPOINT_KEY
     )
@@ -108,11 +269,7 @@ async def advance_and_ingest(
     await _finish_intent(
         store,
         intent_key,
-        payload
-        | {
-            "committed_chunks": committed,
-            "inserted_events": inserted,
-        },
+        payload | {"committed_chunks": committed, "inserted_events": inserted},
     )
     return AdvanceOutcome(
         finished=finished,
@@ -123,28 +280,38 @@ async def advance_and_ingest(
     )
 
 
-async def _save_intent_payload(
-    store: DatabaseStore, intent_key: str, payload: dict[str, Any]
+async def _set_intent(
+    store: DatabaseStore,
+    intent_key: str,
+    status: str,
+    payload: dict[str, Any],
+    *,
+    increment_attempts: bool = False,
 ) -> None:
     async with store.transaction() as session:
         operation = await store.get_outbox_operation(intent_key)
         if operation is None:
             raise RuntimeError("advance intent disappeared before reconciliation")
         await store.update_outbox_status(
-            session, operation.id, "in_progress", payload=payload
+            session,
+            operation.id,
+            status,
+            payload=payload,
+            increment_attempts=increment_attempts,
         )
 
 
 async def _finish_intent(
     store: DatabaseStore, intent_key: str, payload: dict[str, Any]
 ) -> None:
-    async with store.transaction() as session:
-        operation = await store.get_outbox_operation(intent_key)
-        if operation is None:
-            raise RuntimeError("advance intent disappeared before completion")
-        await store.update_outbox_status(
-            session, operation.id, "succeeded", payload=payload
-        )
+    await _set_intent(store, intent_key, "succeeded", payload)
+
+
+def _has_progress(before: dict[str, Any], current: dict[str, Any]) -> bool:
+    return any(
+        current[field] > before[field]
+        for field in ("sim_minute", "chunks", "last_event_id")
+    ) or (current["finished"] and not before["finished"])
 
 
 def _state_snapshot(state: dict[str, Any]) -> dict[str, Any]:

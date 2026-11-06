@@ -119,8 +119,11 @@ chunk order, fetches NDJSON through the HTTP client, and stores validated events
 in one transaction. Memory use is bounded with a 1 MiB in-memory download spool and 500-row database batches;
 larger response bodies spill to operating-system temporary storage. Before each `/sim/advance` POST, it commits
 an advance intent to the outbox. The POST is sent once, its returned descriptors are persisted, then those
-chunks are ingested. If the POST outcome is ambiguous, the intent remains available for reconciliation and the
-controller stops without blindly retrying.
+chunks are ingested. If the POST outcome is ambiguous, the controller stops without blindly retrying. On
+restart, it compares the saved pre-request simulator state with `/sim/state` and ordered chunk listings. It
+ingests published chunks and completes the intent when progress is visible; it retries the same intent only
+after the state is unchanged and no new descriptors are available. Missing or conflicting evidence leaves the
+intent unresolved and stops further advances.
 
 ### Repository layout
 
