@@ -1,10 +1,10 @@
 # Progress Tracking — Outcome-First Agent Loop
 
-## Overall status: IN PROGRESS — CHUNK 4
+## Overall status: COMPLETE — CHUNK 4
 
-**Current phase:** Chunk 3 reliable event ingestion complete; Chunk 4 implementation complete, final commit recording pending
+**Current phase:** Chunk 4 history, KPI facts and audit queries complete
 **Current chunk:** 4 — History, KPI facts, and audit query
-**Current next action:** Complete Chunk 4 subtask 5 — end-to-end integration and hardening.
+**Current next action:** Await review; Chunk 5 — Governance lifecycle has not started.
 
 ## Implementation progress
 
@@ -13,7 +13,7 @@
 | 1 | Runtime and launcher | COMPLETE | `cfc28d2`, `730cf26`, `71bdd8a` (and earlier foundation/config commits listed below) |
 | 2 | Durable schema and audit | COMPLETE | `aab9708`, `2443889`, `31af0ea`, `a3d7a6b`, `e88ed27` |
 | 3 | Simulator chunk ingestion | COMPLETE | `d921490`, `b6b88f6`, `6bdce40`, `f975203`, `09bf0b6`, `adf5b54` |
-| 4 | History, KPI facts, audit query | IN PROGRESS | — |
+| 4 | History, KPI facts, audit query | COMPLETE | `79caf3d`, `bf4e93b`, `237d6b2`, `f640e9b`, `bd1f94b`, `b87a39b` |
 | 5 | Governance lifecycle | NOT STARTED | — |
 | 6 | Statistical comparison | NOT STARTED | — |
 | 7 | Public incident workflow | NOT STARTED | — |
@@ -29,7 +29,7 @@
 | 2. KPI fact derivation | COMPLETE | analytics unit: 8 passed; analytics PostgreSQL integration: 2 passed; history/storage/schema tests: 18 passed; Alembic upgrade/check and Ruff passed | `bf4e93b` |
 | 3. KPI calculations and cohorts | COMPLETE | analytics unit: 16 passed; analytics PostgreSQL integration: 3 passed; history/storage/schema tests: 19 passed; Alembic and Ruff passed | `237d6b2` |
 | 4. Read-only audit queries | COMPLETE | audit unit: 3 passed; PostgreSQL query integration: 1 passed; storage regression suite: 11 passed; Alembic check and Ruff passed | `f640e9b` |
-| 5. Integration and hardening | COMPLETE | analytics unit: 17 passed; analytics integration: 5 passed; full suite: 123 passed in 46.61s; Ruff, format, compileall and repeated Alembic upgrade/check passed | pending |
+| 5. Integration and hardening | COMPLETE | analytics unit: 17 passed; analytics integration: 5 passed; full suite: 123 passed in 46.61s; Ruff, format, compileall and repeated Alembic upgrade/check passed | `bd1f94b`, `b87a39b` |
 
 Subtask 1 adds bounded keyset pagination over persisted event IDs, optional workflow filtering, and discovery of workflow IDs observed in event payloads. It does not assume consecutive event IDs or merge history/live rows by arithmetic; event ID uniqueness already deduplicates both streams in storage. Integration tests used an isolated PostgreSQL 18 cluster under the system temporary directory; Docker was not started and the existing host/Compose databases were not changed.
 
@@ -185,7 +185,7 @@ Do not rewrite prior history.
 
 ## Next action
 
-Chunk 4 is complete. Next: Chunk 5 — Governance lifecycle. Do not start Chunk 5 before review/approval.
+Chunk 4 is complete. Next: Chunk 5 — Governance lifecycle. It has not started; wait for review/approval before beginning.
 
 ### Chunk 3 measured evidence (synthetic HTTP stream, PostgreSQL 18)
 
