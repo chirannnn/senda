@@ -4,7 +4,7 @@
 
 **Current phase:** Chunk 3 reliable event ingestion complete; Chunk 4 in progress
 **Current chunk:** 4 — History, KPI facts, and audit query
-**Current next action:** Complete Chunk 4 subtask 2 — durable KPI fact derivation.
+**Current next action:** Complete Chunk 4 subtask 3 — KPI calculations and versioned cohorts.
 
 ## Implementation progress
 
@@ -25,13 +25,15 @@
 
 | Subtask | Status | Validation | Commit |
 |---|---|---|---|
-| 1. Historical query foundation | COMPLETE | `pytest -q tests/integration/storage/test_history_queries.py` — 2 passed against a temporary local PostgreSQL 18 cluster; Ruff check/format and `git diff --check` passed | pending |
-| 2. KPI fact derivation | NOT STARTED | — | — |
+| 1. Historical query foundation | COMPLETE | `pytest -q tests/integration/storage/test_history_queries.py` — 2 passed; Ruff check/format and `git diff --check` passed | `79caf3d` |
+| 2. KPI fact derivation | COMPLETE | analytics unit: 8 passed; analytics PostgreSQL integration: 2 passed; history/storage/schema tests: 18 passed; Alembic upgrade/check and Ruff passed | pending |
 | 3. KPI calculations and cohorts | NOT STARTED | — | — |
 | 4. Read-only audit queries | NOT STARTED | — | — |
 | 5. Integration and hardening | NOT STARTED | — | — |
 
 Subtask 1 adds bounded keyset pagination over persisted event IDs, optional workflow filtering, and discovery of workflow IDs observed in event payloads. It does not assume consecutive event IDs or merge history/live rows by arithmetic; event ID uniqueness already deduplicates both streams in storage. Integration tests used an isolated PostgreSQL 18 cluster under the system temporary directory; Docker was not started and the existing host/Compose databases were not changed.
+
+Subtask 2 adds migration `0002_kpi_facts`, provenance-linked per-event facts and a dedicated analytics scan cursor. The processor reads keyset pages, records supported event types and explicitly labels invalid, incomplete, or unsupported payloads. `campaign_created.leads` contributes uploads; only `call` events contribute dials, connected counts use the contract's boolean, and concluded counts use the two documented conclusion dispositions (not the separate `engaged` flag). A unique source event ID and one transaction for each fact page plus cursor make reruns/restarts safe. The cursor refuses regression. Failure injection verified an FK failure rolls back the cursor. A fresh store reopened committed facts, and a second pass inserted zero duplicate rows. No plan change to prior migrations was made.
 
 ## Chunk 3 subtask progress
 

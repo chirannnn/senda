@@ -3,6 +3,7 @@ from sqlalchemy import JSON
 from controller.storage.models import (
     AuditRecord,
     Base,
+    KpiFact,
     OutboxOperation,
     ProcessingCheckpoint,
     SimulatorEvent,
@@ -16,6 +17,8 @@ def test_durable_schema_contains_required_versioned_entities():
         "workflow_references",
         "simulator_events",
         "processing_checkpoints",
+        "analytics_checkpoints",
+        "kpi_facts",
         "audit_records",
         "outbox_operations",
     } == set(Base.metadata.tables)
@@ -49,3 +52,12 @@ def test_audit_records_reference_known_workflows():
     workflow = Base.metadata.tables[WorkflowReference.__tablename__]
     foreign_key = next(iter(audit.c.workflow_id.foreign_keys))
     assert foreign_key.column == workflow.c.workflow_id
+
+
+def test_kpi_facts_are_unique_provenance_linked_and_indexed():
+    facts = Base.metadata.tables[KpiFact.__tablename__]
+    assert facts.primary_key.columns.keys() == ["source_event_id"]
+    assert facts.c.source_event_id.foreign_keys
+    assert any(
+        index.name == "ix_kpi_facts_workflow_version_time" for index in facts.indexes
+    )

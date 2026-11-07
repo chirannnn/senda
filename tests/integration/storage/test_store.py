@@ -249,6 +249,6 @@ async def test_committed_state_survives_store_reopen_and_migrations_repeat(
                 text("SELECT version_num FROM alembic_version")
             )
         assert versions == 1
-        assert revision == "0001_durable_store"
+        assert revision == "0002_kpi_facts"
     finally:
         await reopened.close()

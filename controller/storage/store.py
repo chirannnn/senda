@@ -26,7 +26,9 @@ from sqlalchemy.ext.asyncio import (
 
 from controller.errors import ConfigurationError
 from controller.storage.models import (
+    AnalyticsCheckpoint,
     ControllerRun,
+    KpiFact,
     OutboxOperation,
     ProcessingCheckpoint,
     SimulatorEvent,
@@ -42,6 +44,31 @@ class EventRecord:
     chunk_number: int
     kind: str
     payload: dict[str, object]
+
+
+@dataclass(frozen=True, slots=True)
+class KpiFactRecord:
+    """Validated additive metrics plus raw-event provenance for one event."""
+
+    source_event_id: int
+    source_chunk: int
+    source_kind: str
+    workflow_id: str | None
+    event_type: str
+    occurred_at: datetime | None
+    campaign_id: str | None
+    lead_id: str | None
+    person_id: str | None
+    config_version: int | None
+    observed_cohort_id: str | None
+    variant: dict[str, object] | None
+    features: dict[str, object] | None
+    quality: str
+    quality_detail: str | None
+    dials: int = 0
+    connected: int = 0
+    concluded: int = 0
+    uploaded: int = 0
 
 
 class EventConflictError(RuntimeError):
@@ -226,6 +253,92 @@ class DatabaseStore:
         )
         async with self._sessions() as session:
             return list((await session.scalars(statement)).all())
+
+    async def get_analytics_cursor(self, processor: str) -> int:
+        """Read a derivation cursor, defaulting to the beginning of event history."""
+        self._ensure_open()
+        async with self._sessions() as session:
+            value = await session.scalar(
+                select(AnalyticsCheckpoint.event_id).where(
+                    AnalyticsCheckpoint.processor == processor
+                )
+            )
+            return value or 0
+
+    async def commit_kpi_page(
+        self,
+        processor: str,
+        facts: list[KpiFactRecord],
+        scanned_through_event_id: int,
+    ) -> int:
+        """Persist a fact page and its scan cursor atomically and idempotently."""
+        if scanned_through_event_id < 0 or any(
+            fact.source_event_id > scanned_through_event_id for fact in facts
+        ):
+            raise ValueError("analytics cursor cannot precede a fact in its page")
+        inserted_count = 0
+        async with self.transaction() as session:
+            workflow_ids = {fact.workflow_id for fact in facts if fact.workflow_id}
+            for workflow_id in workflow_ids:
+                await self.ensure_workflow(session, workflow_id)
+            if facts:
+                rows = [
+                    {
+                        "source_event_id": fact.source_event_id,
+                        "source_chunk": fact.source_chunk,
+                        "source_kind": fact.source_kind,
+                        "workflow_id": fact.workflow_id,
+                        "event_type": fact.event_type,
+                        "occurred_at": fact.occurred_at,
+                        "campaign_id": fact.campaign_id,
+                        "lead_id": fact.lead_id,
+                        "person_id": fact.person_id,
+                        "config_version": fact.config_version,
+                        "observed_cohort_id": fact.observed_cohort_id,
+                        "variant": fact.variant,
+                        "features": fact.features,
+                        "quality": fact.quality,
+                        "quality_detail": fact.quality_detail,
+                        "dials": fact.dials,
+                        "connected": fact.connected,
+                        "concluded": fact.concluded,
+                        "uploaded": fact.uploaded,
+                    }
+                    for fact in facts
+                ]
+                statement = (
+                    postgresql_insert(KpiFact)
+                    .values(rows)
+                    .on_conflict_do_nothing(index_elements=[KpiFact.source_event_id])
+                    .returning(KpiFact.source_event_id)
+                )
+                inserted_count = len((await session.execute(statement)).scalars().all())
+
+            table = AnalyticsCheckpoint
+            cursor_statement = (
+                postgresql_insert(table)
+                .values(processor=processor, event_id=scanned_through_event_id)
+                .on_conflict_do_update(
+                    index_elements=[table.processor],
+                    set_={
+                        "event_id": scanned_through_event_id,
+                        "updated_at": func.now(),
+                    },
+                    where=table.event_id <= scanned_through_event_id,
+                )
+            )
+            updated_cursor = await session.scalar(
+                cursor_statement.returning(table.event_id)
+            )
+            if updated_cursor is None:
+                current = await session.scalar(
+                    select(table.event_id).where(table.processor == processor)
+                )
+                raise CheckpointRegressionError(
+                    f"analytics cursor {processor!r} cannot move from {current} "
+                    f"to {scanned_through_event_id}"
+                )
+        return inserted_count
 
     async def create_run(
         self, session: AsyncSession, details: dict[str, object] | None = None

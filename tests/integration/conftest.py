@@ -4,8 +4,10 @@ import pytest
 from sqlalchemy import delete
 
 from controller.storage.models import (
+    AnalyticsCheckpoint,
     AuditRecord,
     ControllerRun,
+    KpiFact,
     OutboxOperation,
     ProcessingCheckpoint,
     SimulatorEvent,
@@ -35,6 +37,8 @@ async def postgres_store():
             for model in (
                 OutboxOperation,
                 AuditRecord,
+                KpiFact,
+                AnalyticsCheckpoint,
                 SimulatorEvent,
                 ProcessingCheckpoint,
                 ControllerRun,

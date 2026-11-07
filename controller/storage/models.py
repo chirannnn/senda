@@ -92,6 +92,70 @@ class ProcessingCheckpoint(Base):
     )
 
 
+class AnalyticsCheckpoint(Base):
+    """Last source event scanned by one restartable analytics processor."""
+
+    __tablename__ = "analytics_checkpoints"
+
+    processor: Mapped[str] = mapped_column(Text, primary_key=True)
+    event_id: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class KpiFact(Base):
+    """One durable, provenance-linked projection of a stored simulator event."""
+
+    __tablename__ = "kpi_facts"
+    __table_args__ = (
+        CheckConstraint(
+            "dials >= 0 AND connected >= 0 AND concluded >= 0 AND uploaded >= 0 "
+            "AND connected <= dials AND concluded <= connected",
+            name="ck_kpi_facts_counts",
+        ),
+        Index("ix_kpi_facts_workflow_time", "workflow_id", "occurred_at"),
+        Index(
+            "ix_kpi_facts_workflow_version_time",
+            "workflow_id",
+            "config_version",
+            "occurred_at",
+        ),
+        Index("ix_kpi_facts_campaign", "workflow_id", "campaign_id"),
+    )
+
+    source_event_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("simulator_events.event_id"), primary_key=True
+    )
+    source_chunk: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    source_kind: Mapped[str] = mapped_column(Text, nullable=False)
+    workflow_id: Mapped[str | None] = mapped_column(
+        Text, ForeignKey("workflow_references.workflow_id")
+    )
+    event_type: Mapped[str] = mapped_column(Text, nullable=False)
+    occurred_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    campaign_id: Mapped[str | None] = mapped_column(Text)
+    lead_id: Mapped[str | None] = mapped_column(Text)
+    person_id: Mapped[str | None] = mapped_column(Text)
+    config_version: Mapped[int | None] = mapped_column(BigInteger)
+    observed_cohort_id: Mapped[str | None] = mapped_column(Text)
+    variant: Mapped[dict[str, object] | None] = mapped_column(JSON)
+    features: Mapped[dict[str, object] | None] = mapped_column(JSON)
+    quality: Mapped[str] = mapped_column(Text, nullable=False)
+    quality_detail: Mapped[str | None] = mapped_column(Text)
+    dials: Mapped[int] = mapped_column(nullable=False, default=0, server_default="0")
+    connected: Mapped[int] = mapped_column(
+        nullable=False, default=0, server_default="0"
+    )
+    concluded: Mapped[int] = mapped_column(
+        nullable=False, default=0, server_default="0"
+    )
+    uploaded: Mapped[int] = mapped_column(nullable=False, default=0, server_default="0")
+    derived_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
 class AuditRecord(Base):
     """Append-only explanation of a controller observation or action."""
 
