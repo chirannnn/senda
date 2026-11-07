@@ -183,6 +183,47 @@ def required_sample_sizes(
     return control_n, treatment_n
 
 
+def required_noninferiority_sample_sizes(
+    *,
+    baseline_rate: float,
+    margin: float,
+    allocation_ratio: float,
+    intracluster_correlation: float,
+    mean_cluster_size: float,
+    alpha: float,
+    power: float,
+    comparisons: int,
+) -> tuple[int, int]:
+    """Plan a non-inferiority comparison under an equal-rate alternative."""
+    if not math.isfinite(baseline_rate) or not 0 <= baseline_rate <= 1:
+        raise ValueError("guardrail baseline must be a finite rate in [0,1]")
+    if not math.isfinite(margin) or not 0 < margin <= 1:
+        raise ValueError("non-inferiority margin must be in (0,1]")
+    if (
+        not math.isfinite(allocation_ratio)
+        or allocation_ratio <= 0
+        or not math.isfinite(mean_cluster_size)
+        or mean_cluster_size < 1
+    ):
+        raise ValueError("allocation ratio and mean cluster size must be positive")
+    if (
+        not math.isfinite(intracluster_correlation)
+        or not 0 <= intracluster_correlation <= 1
+    ):
+        raise ValueError("intracluster correlation must be in [0,1]")
+    if not 0 < alpha < 1 or not 0 < power < 1 or comparisons < 1:
+        raise ValueError("alpha, power and comparison count are invalid")
+    z_alpha = NormalDist().inv_cdf(1 - (alpha / comparisons))
+    z_power = NormalDist().inv_cdf(power)
+    variance = baseline_rate * (1 - baseline_rate) * (1 + 1 / allocation_ratio)
+    design_effect = 1 + (mean_cluster_size - 1) * intracluster_correlation
+    control_n = math.ceil(
+        (z_alpha + z_power) ** 2 * variance / margin**2 * design_effect
+    )
+    treatment_n = math.ceil(control_n * allocation_ratio)
+    return control_n, treatment_n
+
+
 def _resample(
     values: Sequence[PersonOutcome], rng: random.Random
 ) -> list[PersonOutcome]:

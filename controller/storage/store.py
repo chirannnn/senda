@@ -30,6 +30,7 @@ from controller.errors import ConfigurationError
 from controller.storage.models import (
     AnalyticsCheckpoint,
     ControllerRun,
+    ExperimentDecision,
     GovernanceProposal,
     KpiFact,
     OutboxOperation,
@@ -89,6 +90,10 @@ class OutboxConflictError(RuntimeError):
 
 class GovernanceProposalConflictError(RuntimeError):
     """A stable proposal ID was reused for a different request payload."""
+
+
+class ExperimentDecisionConflictError(RuntimeError):
+    """A stable experiment ID was reused for different inputs or evidence."""
 
 
 class DatabaseStore:
@@ -581,6 +586,92 @@ class DatabaseStore:
             .limit(limit)
         )
         self._ensure_open()
+        async with self._sessions() as session:
+            return list((await session.scalars(statement)).all())
+
+    async def save_experiment_decision(
+        self,
+        session: AsyncSession,
+        *,
+        experiment_id: str,
+        workflow_id: str,
+        config_version: int,
+        cohort_id: str,
+        policy_version: str,
+        cutoff_event_id: int,
+        input_hash: str,
+        plan_snapshot: dict[str, object],
+        input_snapshot: dict[str, object],
+        decision: dict[str, object],
+    ) -> ExperimentDecision:
+        """Persist one immutable decision or verify an identical retry."""
+        self.require_transaction(session)
+        if not experiment_id or not policy_version or not cohort_id:
+            raise ValueError("experiment, policy and cohort identities are required")
+        if (
+            isinstance(config_version, bool)
+            or not isinstance(config_version, int)
+            or config_version < 0
+            or isinstance(cutoff_event_id, bool)
+            or not isinstance(cutoff_event_id, int)
+            or cutoff_event_id < 0
+        ):
+            raise ValueError("experiment config version and cutoff must be nonnegative")
+        if (
+            not isinstance(input_hash, str)
+            or len(input_hash) != 64
+            or any(character not in "0123456789abcdef" for character in input_hash)
+        ):
+            raise ValueError("experiment input hash must be a SHA-256 hex digest")
+        await self.ensure_workflow(session, workflow_id)
+        values = {
+            "experiment_id": experiment_id,
+            "workflow_id": workflow_id,
+            "config_version": config_version,
+            "cohort_id": cohort_id,
+            "policy_version": policy_version,
+            "cutoff_event_id": cutoff_event_id,
+            "input_hash": input_hash,
+            "plan_snapshot": plan_snapshot,
+            "input_snapshot": input_snapshot,
+            "decision": decision,
+        }
+        statement = (
+            postgresql_insert(ExperimentDecision)
+            .values(**values)
+            .on_conflict_do_nothing(index_elements=[ExperimentDecision.experiment_id])
+        )
+        inserted = await session.execute(statement)
+        stored = await session.get(ExperimentDecision, experiment_id)
+        if stored is None:
+            raise RuntimeError("experiment decision disappeared after insert")
+        if inserted.rowcount == 0 and any(
+            getattr(stored, key) != value for key, value in values.items()
+        ):
+            raise ExperimentDecisionConflictError(
+                f"experiment ID {experiment_id!r} was reused for different inputs or outcome"
+            )
+        return stored
+
+    async def get_experiment_decision(
+        self, experiment_id: str
+    ) -> ExperimentDecision | None:
+        """Read an immutable experiment decision by stable identity."""
+        self._ensure_open()
+        async with self._sessions() as session:
+            return await session.get(ExperimentDecision, experiment_id)
+
+    async def list_experiment_decisions(
+        self, *, workflow_id: str | None = None
+    ) -> list[ExperimentDecision]:
+        """List immutable decisions in durable creation order."""
+        self._ensure_open()
+        statement = select(ExperimentDecision)
+        if workflow_id is not None:
+            statement = statement.where(ExperimentDecision.workflow_id == workflow_id)
+        statement = statement.order_by(
+            ExperimentDecision.created_at, ExperimentDecision.experiment_id
+        )
         async with self._sessions() as session:
             return list((await session.scalars(statement)).all())
 

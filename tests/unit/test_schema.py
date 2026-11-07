@@ -3,6 +3,7 @@ from sqlalchemy import JSON
 from controller.storage.models import (
     AuditRecord,
     Base,
+    ExperimentDecision,
     GovernanceProposal,
     KpiFact,
     OutboxOperation,
@@ -25,6 +26,7 @@ def test_durable_schema_contains_required_versioned_entities():
         "audit_records",
         "outbox_operations",
         "governance_proposals",
+        "experiment_decisions",
     } == set(Base.metadata.tables)
 
 
@@ -83,3 +85,11 @@ def test_cohort_rules_have_a_versioned_stable_key_and_order():
         constraint.name == "uq_cohort_def_workflow_version_ordinal"
         for constraint in cohorts.constraints
     )
+
+
+def test_experiment_decisions_are_immutable_identity_scoped_snapshots():
+    table = Base.metadata.tables[ExperimentDecision.__tablename__]
+    assert table.primary_key.columns.keys() == ["experiment_id"]
+    assert table.c.input_hash.type.length == 64
+    assert table.c.workflow_id.foreign_keys
+    assert {"plan_snapshot", "input_snapshot", "decision"} <= set(table.columns.keys())

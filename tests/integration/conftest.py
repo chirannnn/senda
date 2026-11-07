@@ -7,6 +7,7 @@ from controller.storage.models import (
     AnalyticsCheckpoint,
     AuditRecord,
     ControllerRun,
+    ExperimentDecision,
     GovernanceProposal,
     KpiFact,
     OutboxOperation,
@@ -38,6 +39,7 @@ async def postgres_store():
         async with store.transaction() as session:
             for model in (
                 OutboxOperation,
+                ExperimentDecision,
                 GovernanceProposal,
                 AuditRecord,
                 KpiFact,

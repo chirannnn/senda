@@ -279,6 +279,40 @@ class GovernanceProposal(Base):
     )
 
 
+class ExperimentDecision(Base):
+    """Immutable evidence snapshot and statistical decision for one experiment."""
+
+    __tablename__ = "experiment_decisions"
+    __table_args__ = (
+        CheckConstraint("config_version >= 0", name="ck_experiment_config_version"),
+        CheckConstraint("cutoff_event_id >= 0", name="ck_experiment_cutoff_event"),
+        UniqueConstraint(
+            "workflow_id", "experiment_id", name="uq_experiment_workflow_identity"
+        ),
+        Index(
+            "ix_experiment_decisions_workflow_created",
+            "workflow_id",
+            "created_at",
+        ),
+    )
+
+    experiment_id: Mapped[str] = mapped_column(Text, primary_key=True)
+    workflow_id: Mapped[str] = mapped_column(
+        Text, ForeignKey("workflow_references.workflow_id"), nullable=False
+    )
+    config_version: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    cohort_id: Mapped[str] = mapped_column(Text, nullable=False)
+    policy_version: Mapped[str] = mapped_column(Text, nullable=False)
+    cutoff_event_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    input_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    plan_snapshot: Mapped[dict[str, object]] = mapped_column(JSON, nullable=False)
+    input_snapshot: Mapped[dict[str, object]] = mapped_column(JSON, nullable=False)
+    decision: Mapped[dict[str, object]] = mapped_column(JSON, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
 class OutboxOperation(Base):
     """Durable record of an external operation requiring later reconciliation."""
 

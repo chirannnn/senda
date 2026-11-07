@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import math
 from collections import defaultdict
 from dataclasses import dataclass
@@ -14,11 +16,20 @@ from controller.statistics.estimation import (
     arm_counts,
     estimate_rate_difference,
     holm_adjust,
+    required_noninferiority_sample_sizes,
     required_sample_sizes,
 )
-from controller.statistics.models import Decision, Kpi, PersonOutcome
+from controller.statistics.models import (
+    STATISTICS_POLICY_VERSION,
+    Decision,
+    Kpi,
+    PersonOutcome,
+)
 from controller.storage.models import KpiFact
-from controller.storage.store import DatabaseStore
+from controller.storage.store import (
+    DatabaseStore,
+    ExperimentDecisionConflictError,
+)
 
 _DIMENSIONS = {"welcome_message", "voice"}
 _PRIMARY_NAMES = {"pickup_rate": Kpi.PICKUP, "engagement_rate": Kpi.ENGAGEMENT}
@@ -49,6 +60,7 @@ class ExperimentPlan:
     mde: float = 0.05
     alpha: float = 0.05
     bootstrap_replicates: int = 10_000
+    policy_version: str = STATISTICS_POLICY_VERSION
 
     def __post_init__(self) -> None:
         if not all((self.experiment_id, self.workflow_id, self.cohort_id)):
@@ -163,6 +175,10 @@ class ExperimentResult:
     reason: str
     excluded_crossover_people: int
     variants: tuple[VariantResult, ...]
+    policy_version: str
+    input_hash: str
+    plan_snapshot: dict[str, object]
+    input_snapshot: dict[str, object]
 
 
 class ExperimentEvaluator:
@@ -229,8 +245,15 @@ class ExperimentEvaluator:
             primary_required = _sample_size(
                 plan, plan.primary_baseline_rate, plan.mde, ratio
             )
-            guardrail_required = _sample_size(
-                plan, plan.guardrail_baseline_rate, margin, ratio
+            guardrail_required = required_noninferiority_sample_sizes(
+                baseline_rate=plan.guardrail_baseline_rate,
+                margin=margin,
+                allocation_ratio=ratio,
+                intracluster_correlation=plan.intracluster_correlation,
+                mean_cluster_size=plan.mean_cluster_size,
+                alpha=plan.alpha,
+                power=plan.power,
+                comparisons=len(plan.challengers),
             )
             primary_rows = outcomes[primary_kpi]
             guardrail_rows = outcomes[guardrail_kpi]
@@ -374,6 +397,8 @@ class ExperimentEvaluator:
                 None,
                 "no challenger met the predeclared primary KPI rule",
             )
+        plan_snapshot = _plan_snapshot(plan)
+        input_hash, input_snapshot = _input_digest(plan_snapshot, facts)
         return ExperimentResult(
             experiment_id=plan.experiment_id,
             workflow_id=plan.workflow_id,
@@ -390,7 +415,38 @@ class ExperimentEvaluator:
             reason=reason,
             excluded_crossover_people=len(crossovers),
             variants=results,
+            policy_version=plan.policy_version,
+            input_hash=input_hash,
+            plan_snapshot=plan_snapshot,
+            input_snapshot=input_snapshot,
         )
+
+    async def evaluate_and_persist(self, plan: ExperimentPlan) -> ExperimentResult:
+        """Return an existing frozen result or atomically persist this final look."""
+        existing = await self._store.get_experiment_decision(plan.experiment_id)
+        snapshot = _plan_snapshot(plan)
+        if existing is not None:
+            if existing.plan_snapshot != snapshot:
+                raise ExperimentDecisionConflictError(
+                    "experiment ID already belongs to a different plan"
+                )
+            return _result_from_record(existing)
+        result = await self.evaluate(plan)
+        async with self._store.transaction() as session:
+            await self._store.save_experiment_decision(
+                session,
+                experiment_id=result.experiment_id,
+                workflow_id=result.workflow_id,
+                config_version=result.config_version,
+                cohort_id=result.cohort_id,
+                policy_version=result.policy_version,
+                cutoff_event_id=result.cutoff_event_id,
+                input_hash=result.input_hash,
+                plan_snapshot=result.plan_snapshot,
+                input_snapshot=result.input_snapshot,
+                decision=_result_to_record(result),
+            )
+        return result
 
 
 def _objective_kpis(objective: dict[str, Any]) -> tuple[Kpi, Kpi, float]:
@@ -512,3 +568,171 @@ def _rate(value: float, name: str, *, allow_zero: bool = True) -> None:
         or (not allow_zero and value == 0)
     ):
         raise ValueError(f"{name} must be a finite rate in [0,1]")
+
+
+def _plan_snapshot(plan: ExperimentPlan) -> dict[str, object]:
+    primary, guardrail, margin = _objective_kpis(plan.objective)
+    return {
+        "schema_version": 1,
+        "experiment_id": plan.experiment_id,
+        "workflow_id": plan.workflow_id,
+        "config_version": plan.config_version,
+        "cohort_id": plan.cohort_id,
+        "dimension": plan.dimension,
+        "control_value": plan.control_value,
+        "challengers": list(plan.challengers),
+        "start_at": plan.start_at.isoformat(),
+        "end_at": plan.end_at.isoformat(),
+        "cutoff_event_id": plan.cutoff_event_id,
+        "primary_kpi": primary.value,
+        "guardrail_kpi": guardrail.value,
+        "guardrail_margin": margin,
+        "objective": plan.objective,
+        "allocation_probabilities": plan.allocation_probabilities,
+        "imbalance_tolerance": plan.imbalance_tolerance,
+        "primary_baseline_rate": plan.primary_baseline_rate,
+        "guardrail_baseline_rate": plan.guardrail_baseline_rate,
+        "mde": plan.mde,
+        "alpha": plan.alpha,
+        "power": plan.power,
+        "intracluster_correlation": plan.intracluster_correlation,
+        "mean_cluster_size": plan.mean_cluster_size,
+        "bootstrap_replicates": plan.bootstrap_replicates,
+        "policy_version": plan.policy_version,
+    }
+
+
+def _input_digest(
+    plan_snapshot: dict[str, object], facts: list[KpiFact]
+) -> tuple[str, dict[str, object]]:
+    evidence = [
+        {
+            "source_event_id": fact.source_event_id,
+            "person_id": fact.person_id,
+            "config_version": fact.config_version,
+            "cohort_id": fact.observed_cohort_id,
+            "variant": fact.variant,
+            "quality": fact.quality,
+            "dials": fact.dials,
+            "connected": fact.connected,
+            "concluded": fact.concluded,
+        }
+        for fact in facts
+    ]
+    canonical = json.dumps(
+        {"plan": plan_snapshot, "facts": evidence},
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+        allow_nan=False,
+    )
+    digest = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+    return digest, {
+        "source_fact_count": len(evidence),
+        "input_sha256": digest,
+        "cutoff_event_id": plan_snapshot["cutoff_event_id"],
+    }
+
+
+def _result_to_record(result: ExperimentResult) -> dict[str, object]:
+    def counts(values: dict[str, ArmCounts]) -> dict[str, dict[str, int]]:
+        return {
+            arm: {
+                "successes": count.successes,
+                "trials": count.trials,
+                "people": count.people,
+            }
+            for arm, count in sorted(values.items())
+        }
+
+    def bootstrap(value: BootstrapResult) -> dict[str, object]:
+        return {
+            "estimate": value.estimate,
+            "lower": value.lower,
+            "upper": value.upper,
+            "p_not_greater_than_threshold": value.p_not_greater_than_threshold,
+            "replicates": value.replicates,
+        }
+
+    return {
+        "decision": result.decision.value,
+        "winner": result.winner,
+        "reason": result.reason,
+        "excluded_crossover_people": result.excluded_crossover_people,
+        "variants": [
+            {
+                "challenger": item.challenger,
+                "primary": bootstrap(item.primary),
+                "guardrail": bootstrap(item.guardrail),
+                "primary_counts": counts(item.primary_counts),
+                "guardrail_counts": counts(item.guardrail_counts),
+                "required_primary_trials": list(item.required_primary_trials),
+                "required_guardrail_trials": list(item.required_guardrail_trials),
+                "primary_adjusted_p": item.primary_adjusted_p,
+                "guardrail_adjusted_p": item.guardrail_adjusted_p,
+                "guardrail_margin": item.guardrail_margin,
+                "balanced": item.balanced,
+                "sufficient": item.sufficient,
+                "guardrail_passed": item.guardrail_passed,
+                "won": item.won,
+            }
+            for item in result.variants
+        ],
+    }
+
+
+def _result_from_record(record: Any) -> ExperimentResult:
+    payload = record.decision
+
+    def bootstrap(value: dict[str, Any]) -> BootstrapResult:
+        return BootstrapResult(
+            estimate=value["estimate"],
+            lower=value["lower"],
+            upper=value["upper"],
+            p_not_greater_than_threshold=value["p_not_greater_than_threshold"],
+            replicates=value["replicates"],
+        )
+
+    def counts(values: dict[str, dict[str, int]]) -> dict[str, ArmCounts]:
+        return {arm: ArmCounts(**count) for arm, count in values.items()}
+
+    plan = record.plan_snapshot
+    return ExperimentResult(
+        experiment_id=record.experiment_id,
+        workflow_id=record.workflow_id,
+        config_version=record.config_version,
+        cohort_id=record.cohort_id,
+        dimension=plan["dimension"],
+        cutoff_event_id=record.cutoff_event_id,
+        start_at=datetime.fromisoformat(plan["start_at"]),
+        end_at=datetime.fromisoformat(plan["end_at"]),
+        primary_kpi=Kpi(plan["primary_kpi"]),
+        guardrail_kpi=Kpi(plan["guardrail_kpi"]),
+        decision=Decision(payload["decision"]),
+        winner=payload["winner"],
+        reason=payload["reason"],
+        excluded_crossover_people=payload["excluded_crossover_people"],
+        variants=tuple(
+            VariantResult(
+                challenger=item["challenger"],
+                primary=bootstrap(item["primary"]),
+                guardrail=bootstrap(item["guardrail"]),
+                primary_counts=counts(item["primary_counts"]),
+                guardrail_counts=counts(item["guardrail_counts"]),
+                required_primary_trials=tuple(item["required_primary_trials"]),
+                required_guardrail_trials=tuple(item["required_guardrail_trials"]),
+                primary_adjusted_p=item["primary_adjusted_p"],
+                guardrail_adjusted_p=item["guardrail_adjusted_p"],
+                guardrail_margin=item["guardrail_margin"],
+                balanced=item["balanced"],
+                sufficient=item["sufficient"],
+                guardrail_passed=item["guardrail_passed"],
+                won=item["won"],
+            )
+            for item in payload["variants"]
+        ),
+        policy_version=record.policy_version,
+        input_hash=record.input_hash,
+        plan_snapshot=plan,
+        input_snapshot=record.input_snapshot,
+    )

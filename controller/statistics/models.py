@@ -22,6 +22,9 @@ class Decision(StrEnum):
     UNSAFE = "unsafe"
 
 
+STATISTICS_POLICY_VERSION = "stat-policy-v1"
+
+
 @dataclass(frozen=True, slots=True)
 class PersonOutcome:
     """A person's additive successes and trials in exactly one experiment arm."""

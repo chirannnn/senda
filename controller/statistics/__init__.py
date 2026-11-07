@@ -5,6 +5,7 @@ from controller.statistics.estimation import (
     BootstrapResult,
     estimate_rate_difference,
     holm_adjust,
+    required_noninferiority_sample_sizes,
     required_sample_sizes,
 )
 
@@ -13,5 +14,6 @@ __all__ = [
     "BootstrapResult",
     "estimate_rate_difference",
     "holm_adjust",
+    "required_noninferiority_sample_sizes",
     "required_sample_sizes",
 ]
