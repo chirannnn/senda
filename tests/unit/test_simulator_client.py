@@ -180,3 +180,96 @@ async def test_methods_require_open_client_and_advance_requires_valid_tick():
     async with client:
         with pytest.raises(ValueError, match="multiple of 15"):
             await client.advance(10)
+
+
+@pytest.mark.anyio
+async def test_governance_reads_and_approval_submission_use_documented_routes():
+    approval = {
+        "approval_id": "apr_00001",
+        "proposal_id": "proposal-1",
+        "workflow_id": "wf-1",
+        "status": "pending",
+        "base_version": 2,
+        "changed_dims": ["voice"],
+    }
+    seen = []
+
+    def handler(request):
+        seen.append((request.method, request.url.path, request.url.query))
+        if request.url.path == "/workflows/wf-1/config":
+            return httpx.Response(
+                200, json={"workflow_id": "wf-1", "version": 2, "config": {}}
+            )
+        if request.url.path == "/workflows/wf-1/config/history":
+            return httpx.Response(200, json=[])
+        if request.url.path == "/approvals" and request.method == "POST":
+            return httpx.Response(200, json=approval)
+        if request.url.path == "/approvals/apr_00001":
+            return httpx.Response(200, json=approval)
+        return httpx.Response(200, json=[approval])
+
+    client = SimulatorClient(_settings(), transport=httpx.MockTransport(handler))
+    async with client:
+        assert (await client.get_workflow_config("wf-1"))["version"] == 2
+        assert await client.get_config_history("wf-1") == []
+        posted = await client.submit_approval({"proposal_id": "proposal-1"})
+        listed = await client.list_approvals(workflow_id="wf-1")
+        fetched = await client.get_approval("apr_00001")
+
+    assert posted["approval_id"] == "apr_00001"
+    assert listed == [approval]
+    assert fetched == approval
+    assert [item[:2] for item in seen] == [
+        ("GET", "/workflows/wf-1/config"),
+        ("GET", "/workflows/wf-1/config/history"),
+        ("POST", "/approvals"),
+        ("GET", "/approvals"),
+        ("GET", "/approvals/apr_00001"),
+    ]
+    assert b"workflow_id=wf-1" in seen[3][2]
+
+
+@pytest.mark.anyio
+async def test_approval_post_timeout_is_ambiguous_and_sent_once():
+    attempts = 0
+
+    def handler(request):
+        nonlocal attempts
+        attempts += 1
+        raise httpx.ReadTimeout("response lost", request=request)
+
+    client = SimulatorClient(_settings(), transport=httpx.MockTransport(handler))
+    async with client:
+        with pytest.raises(AmbiguousPostError, match="do not retry it blindly"):
+            await client.submit_approval({"proposal_id": "proposal-1"})
+
+    assert attempts == 1
+
+
+@pytest.mark.anyio
+async def test_approval_duplicate_is_a_definitive_http_error_not_retried():
+    attempts = 0
+
+    def handler(request):
+        nonlocal attempts
+        attempts += 1
+        return httpx.Response(409, json={"error": "duplicate_proposal_id"})
+
+    client = SimulatorClient(_settings(), transport=httpx.MockTransport(handler))
+    async with client:
+        with pytest.raises(SimulatorHTTPError) as exc_info:
+            await client.submit_approval({"proposal_id": "proposal-1"})
+
+    assert exc_info.value.status_code == 409
+    assert attempts == 1
+
+
+@pytest.mark.anyio
+async def test_malformed_approval_response_fails_closed():
+    client = SimulatorClient(
+        _settings(),
+        transport=httpx.MockTransport(lambda request: httpx.Response(200, json={})),
+    )
+    async with client:
+        with pytest.raises(SimulatorError, match="required identity fields"):
+            await client.submit_approval({"proposal_id": "proposal-1"})

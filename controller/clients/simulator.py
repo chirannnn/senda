@@ -130,6 +130,76 @@ class SimulatorClient:
             raise AmbiguousPostError(path, "successful response was not a JSON object")
         return payload
 
+    async def get_workflow_config(self, workflow_id: str) -> dict[str, Any]:
+        """Read a workflow's current version and full configuration."""
+        if not workflow_id:
+            raise ValueError("workflow ID is required")
+        payload = await self._get_json(f"/workflows/{workflow_id}/config")
+        if (
+            not isinstance(payload, dict)
+            or payload.get("workflow_id") != workflow_id
+            or isinstance(payload.get("version"), bool)
+            or not isinstance(payload.get("version"), int)
+            or payload["version"] < 0
+            or not isinstance(payload.get("config"), dict)
+        ):
+            raise SimulatorError("workflow config response is malformed")
+        return payload
+
+    async def get_config_history(self, workflow_id: str) -> list[dict[str, Any]]:
+        """Read documented config-history records for a workflow."""
+        if not workflow_id:
+            raise ValueError("workflow ID is required")
+        payload = await self._get_json(f"/workflows/{workflow_id}/config/history")
+        if not isinstance(payload, list) or any(
+            not isinstance(item, dict) for item in payload
+        ):
+            raise SimulatorError("workflow config history response is malformed")
+        return payload
+
+    async def submit_approval(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Send one approval request; ambiguous outcomes are never retried here."""
+        path = "/approvals"
+        try:
+            response = await self._require_client().post(path, json=payload)
+        except httpx.RequestError as exc:
+            raise AmbiguousPostError(
+                path, f"transport failure ({type(exc).__name__})"
+            ) from None
+        if 500 <= response.status_code <= 599:
+            raise AmbiguousPostError(
+                path,
+                f"server returned HTTP {response.status_code}; reconcile approval by proposal ID",
+            )
+        self._raise_for_status(response, path)
+        try:
+            result = response.json()
+        except ValueError:
+            raise AmbiguousPostError(
+                path, "successful response was not valid JSON"
+            ) from None
+        return _validate_approval(result)
+
+    async def list_approvals(
+        self, *, workflow_id: str | None = None, status: str | None = None
+    ) -> list[dict[str, Any]]:
+        """Read approvals, optionally filtered by workflow and remote status."""
+        params: dict[str, str] = {}
+        if workflow_id is not None:
+            params["workflow_id"] = workflow_id
+        if status is not None:
+            params["status"] = status
+        payload = await self._get_json("/approvals", params=params or None)
+        if not isinstance(payload, list):
+            raise SimulatorError("approval listing response must be a JSON array")
+        return [_validate_approval(item) for item in payload]
+
+    async def get_approval(self, approval_id: str) -> dict[str, Any]:
+        """Read the latest remote state of one approval."""
+        if not approval_id:
+            raise ValueError("approval ID is required")
+        return _validate_approval(await self._get_json(f"/approvals/{approval_id}"))
+
     async def list_chunks(self, kind: str, after: int = -1) -> list[dict[str, Any]]:
         """List event descriptors through the documented read endpoint."""
         if kind not in {"events", "history"}:
@@ -277,3 +347,34 @@ def _iter_lines(stream: TextIOWrapper) -> Iterator[str]:
             yield line.rstrip("\r\n")
     except UnicodeError as exc:
         raise SimulatorError("chunk response is not valid UTF-8") from exc
+
+
+_APPROVAL_STATUSES = {
+    "pending",
+    "approved",
+    "rejected",
+    "expired",
+    "applied",
+    "lapsed",
+}
+
+
+def _validate_approval(value: object) -> dict[str, Any]:
+    """Validate fields returned by the simulator's documented approval API."""
+    required_strings = ("approval_id", "proposal_id", "workflow_id", "status")
+    if not isinstance(value, dict) or any(
+        not isinstance(value.get(field), str) or not value[field]
+        for field in required_strings
+    ):
+        raise SimulatorError("approval response is missing required identity fields")
+    if value["status"] not in _APPROVAL_STATUSES:
+        raise SimulatorError("approval response has an unknown status")
+    version = value.get("base_version")
+    if isinstance(version, bool) or not isinstance(version, int) or version < 0:
+        raise SimulatorError("approval response has an invalid base_version")
+    dimensions = value.get("changed_dims")
+    if not isinstance(dimensions, list) or any(
+        not isinstance(dimension, str) for dimension in dimensions
+    ):
+        raise SimulatorError("approval response has invalid changed_dims")
+    return value

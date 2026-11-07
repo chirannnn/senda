@@ -6,7 +6,26 @@ import hashlib
 import json
 import math
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Protocol
+
+from controller.errors import AmbiguousPostError, SimulatorHTTPError
+from controller.governance.reconcile import (
+    APPROVAL_SUBMISSION,
+    _record_remote_approval,
+    reconcile_approval_submission,
+)
+from controller.storage.audit import AuditEntry, AuditLog
+from controller.storage.store import DatabaseStore
+
+
+class ApprovalSubmitAPI(Protocol):
+    async def submit_approval(self, payload: dict[str, Any]) -> dict[str, Any]: ...
+
+    async def list_approvals(
+        self, *, workflow_id: str | None = None, status: str | None = None
+    ) -> list[dict[str, Any]]: ...
+
+    async def get_approval(self, approval_id: str) -> dict[str, Any]: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -108,3 +127,124 @@ class ProposalPayload:
             )
         except (TypeError, ValueError) as exc:
             raise ValueError("proposal payload must contain only JSON values") from exc
+
+
+async def submit_proposal(
+    simulator: ApprovalSubmitAPI,
+    store: DatabaseStore,
+    audit: AuditLog,
+    proposal: ProposalPayload,
+) -> dict[str, Any]:
+    """Persist proposal and intent, then submit at most once and reconcile by ID."""
+    existing = await store.get_governance_proposal(proposal.proposal_id)
+    if existing is not None:
+        if (
+            existing.payload_hash != proposal.payload_hash
+            or existing.payload != proposal.to_api_payload()
+        ):
+            raise ValueError("proposal ID already belongs to a different payload")
+        return await reconcile_approval_submission(
+            simulator, store, audit, proposal.proposal_id
+        )
+
+    operation_key = f"approval-submission:{proposal.proposal_id}"
+    async with store.transaction() as session:
+        durable = await store.create_governance_proposal(
+            session,
+            proposal_id=proposal.proposal_id,
+            workflow_id=proposal.workflow_id,
+            base_version=proposal.base_version,
+            payload=proposal.to_api_payload(),
+            payload_hash=proposal.payload_hash,
+        )
+        operation = await store.create_outbox_operation(
+            session,
+            operation_type=APPROVAL_SUBMISSION,
+            dedupe_key=operation_key,
+            workflow_id=proposal.workflow_id,
+            payload={
+                "proposal_id": proposal.proposal_id,
+                "payload_hash": proposal.payload_hash,
+            },
+        )
+        if operation.status != "pending":
+            should_submit = False
+        else:
+            await store.update_outbox_status(
+                session, operation.id, "in_progress", increment_attempts=True
+            )
+            await store.update_governance_proposal(
+                session, durable.proposal_id, status="submitted"
+            )
+            await audit.append(
+                session,
+                AuditEntry(
+                    action="approval_submission_prepared",
+                    actor="controller",
+                    reason="Persisted proposal and outbox intent before approval request",
+                    workflow_id=proposal.workflow_id,
+                    resource_type="proposal",
+                    resource_id=proposal.proposal_id,
+                    evidence={
+                        "proposal_id": proposal.proposal_id,
+                        "payload_hash": proposal.payload_hash,
+                        "base_version": proposal.base_version,
+                        "diff": proposal.diff,
+                        "rationale": proposal.rationale,
+                        "proposal_evidence": proposal.evidence or {},
+                    },
+                ),
+            )
+            should_submit = True
+
+    if not should_submit:
+        return await reconcile_approval_submission(
+            simulator, store, audit, proposal.proposal_id
+        )
+
+    try:
+        approval = await simulator.submit_approval(proposal.to_api_payload())
+    except AmbiguousPostError:
+        return await reconcile_approval_submission(
+            simulator, store, audit, proposal.proposal_id
+        )
+    except SimulatorHTTPError as exc:
+        if exc.status_code == 409:
+            return await reconcile_approval_submission(
+                simulator, store, audit, proposal.proposal_id
+            )
+        async with store.transaction() as session:
+            durable_operation = await store.get_outbox_operation(operation_key)
+            if durable_operation is not None:
+                await store.update_outbox_status(
+                    session, durable_operation.id, "failed"
+                )
+            await audit.append(
+                session,
+                AuditEntry(
+                    action="approval_submission_failed",
+                    actor="controller",
+                    reason="Simulator rejected the approval request",
+                    workflow_id=proposal.workflow_id,
+                    resource_type="proposal",
+                    resource_id=proposal.proposal_id,
+                    evidence={
+                        "proposal_id": proposal.proposal_id,
+                        "payload_hash": proposal.payload_hash,
+                        "http_status": exc.status_code,
+                    },
+                ),
+            )
+        raise
+
+    if (
+        approval.get("proposal_id") != proposal.proposal_id
+        or approval.get("workflow_id") != proposal.workflow_id
+    ):
+        return await reconcile_approval_submission(
+            simulator, store, audit, proposal.proposal_id
+        )
+    durable = await store.get_governance_proposal(proposal.proposal_id)
+    if durable is None:
+        raise RuntimeError("durable proposal disappeared after successful submission")
+    return await _record_remote_approval(store, audit, durable, approval)

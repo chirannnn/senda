@@ -32,3 +32,11 @@ class AmbiguousPostError(SimulatorError):
         super().__init__(
             f"The result of POST {path} is ambiguous ({reason}); do not retry it blindly."
         )
+
+
+class GovernanceError(ControllerError):
+    """A proposal lifecycle operation failed or requires operator attention."""
+
+
+class ProposalReconciliationRequired(GovernanceError):
+    """Remote proposal state could not be established safely."""
