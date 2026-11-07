@@ -6,6 +6,8 @@ from uuid import UUID
 import pytest
 from sqlalchemy import func, select
 
+from controller.analytics.audit import query_for_cohort
+from controller.analytics.cohorts import definitions_from_config
 from controller.storage.audit import AuditCursor, AuditLog, AuditQuery
 from controller.storage.models import AuditRecord
 
@@ -45,6 +47,7 @@ async def test_audit_query_filters_and_keyset_pages_without_mutation(postgres_st
                             "controller",
                             {
                                 "config_version": 3,
+                                "cohort_id": "default",
                                 "approval_id": "ap-1",
                                 "outcome": "applied",
                             },
@@ -62,6 +65,11 @@ async def test_audit_query_filters_and_keyset_pages_without_mutation(postgres_st
                                 "approval_id": "ap-2",
                                 "outcome": "pending",
                             },
+                        ),
+                        (
+                            "legacy_record",
+                            "controller",
+                            {"config_version": "unverified", "outcome": "unknown"},
                         ),
                     ],
                     start=1,
@@ -98,16 +106,28 @@ async def test_audit_query_filters_and_keyset_pages_without_mutation(postgres_st
     assert [row.id for row in second.records] == [UUID(int=102)]
     assert second.next_cursor is None
 
-    applied = await audit.query(
-        AuditQuery(workflow_id="audit-query-wf", outcome="applied")
+    default_cohort = definitions_from_config("audit-query-wf", 3, {"cohorts": []})[-1]
+    applied = await query_for_cohort(
+        audit,
+        default_cohort,
+        start_at=datetime(2027, 1, 4, 0, tzinfo=UTC),
+        end_at=datetime(2027, 1, 5, 0, tzinfo=UTC),
     )
     assert [row.id for row in applied.records] == [UUID(int=102)]
     supervisor = await audit.query(
         AuditQuery(workflow_id="audit-query-wf", actor="supervisor")
     )
     assert [row.id for row in supervisor.records] == [UUID(int=103)]
+    config_three = await audit.query(
+        AuditQuery(workflow_id="audit-query-wf", config_version=3)
+    )
+    assert [row.id for row in config_three.records] == [
+        UUID(int=101),
+        UUID(int=102),
+        UUID(int=103),
+    ]
 
     async with store.transaction() as session:
         count = await session.scalar(select(func.count()).select_from(AuditRecord))
-    assert count == 4
-    assert len(await audit.list_for_workflow("audit-query-wf")) == 4
+    assert count == 5
+    assert len(await audit.list_for_workflow("audit-query-wf")) == 5

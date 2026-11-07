@@ -96,8 +96,9 @@ workflows and state over HTTP, then advances until the simulator reports complet
 stops after any in-flight HTTP operation finishes. JSON logs go to stderr; the simulator URL and credentials
 are not logged. An ambiguous advance response exits safely without issuing another advance.
 
-The runtime now persists simulator events and advance intents. It does not yet calculate KPIs or make
-optimization, experimentation, or governance decisions; those remain later plan chunks.
+The runtime persists simulator events and advance intents, then derives durable event facts after startup
+reconciliation and each committed advance. It does not make optimization, experimentation, or governance
+decisions; those remain later plan chunks.
 
 ### Durable storage (Chunk 2)
 
@@ -128,10 +129,36 @@ intent unresolved and stops further advances. Chunk reads may be replayed; uniqu
 transactions provide effectively-once local persistence, not end-to-end exactly-once delivery. Advance is
 bounded to the initial POST plus one reconciled retry; repeated ambiguity requires manual reconciliation.
 
+### Historical facts and audit queries (Chunk 4)
+
+After raw chunks are committed, a restartable analytics processor reads persisted events in bounded pages and
+stores one fact per source event. The event ID is the uniqueness key, and each page's facts and scan cursor
+commit together. Facts retain source event/chunk/kind, workflow, campaign, lead/person, timestamp, config
+version, observed cohort, actual call variant, and a data-quality status. `campaign_created.leads` contributes
+uploaded leads; `call` contributes one dial, its `connected` boolean contributes pickup, and the documented
+`concluded_interested`/`concluded_not_interested` dispositions contribute conclusions. The independent rates
+are `connected / dials` (pickup) and `concluded / connected` (engagement). An empty denominator produces an
+undefined (`None` in the Python summary) rate. The `engaged` event flag is preserved in raw events but is not
+used as a substitute for the documented conclusion dispositions.
+
+Lead-to-call history joins use only preceding lead events for the same workflow and lead ID. Missing lead
+records remain explicit; returning-person status is based on an earlier lead event with the same persisted
+`person_id`. A canonical `CohortDefinition` carries workflow, config version, ID, order, and predicate. It can
+be built from an HTTP-supplied config snapshot, evaluated in first-match order, persisted immutably per config
+version, and passed to KPI or cohort-scoped audit queries. Call facts retain the simulator's observed cohort
+and config version as the actual exposure. Audit browsing is read-only and keyset-paginated by event time and
+record UUID, with filters for workflow, actor, time, config/cohort, approval, outcome, action, and resource.
+
+Facts and cohort rules are durable in Alembic migrations `0002_kpi_facts` and
+`0003_cohort_definitions`; audit query indexes are in `0004_audit_query_indexes`. Public scenario execution,
+query latency at load scale, and automatic collection of historical cohort predicates from config-history
+responses have not yet been verified. No scenario YAML or simulator run-directory data is used by this code.
+
 ### Repository layout
 
 ```text
 controller/
+  analytics/       historical queries, durable fact derivation, KPIs, and cohorts
   clients/          simulator HTTP client
   config/           runtime settings
   errors/           typed application errors
@@ -142,6 +169,8 @@ controller/
 migrations/         Alembic environment and versioned revisions
 tests/
   unit/             isolated controller and ingestion tests
+  unit/analytics/   fact, KPI, and cohort tests
+  integration/analytics/  PostgreSQL analytics and lead/call join tests
   integration/storage/  PostgreSQL-backed persistence tests
   integration/ingestion/ PostgreSQL-backed ingestion/recovery tests
   contract/         simulator contract tests

@@ -114,11 +114,9 @@ async def test_fact_derivation_is_idempotent_and_survives_store_reopen(postgres_
         )
         assert summary.pickup_rate == 0.5
         assert summary.engagement_rate == 1.0
+        default_cohort = definitions_from_config("analytics-wf", 2, {"cohorts": []})[-1]
         observed_arm = await KpiCalculator(reopened).calculate(
-            "analytics-wf",
-            config_version=2,
-            cohort_id="default",
-            variant={"voice": "V1"},
+            "analytics-wf", cohort=default_cohort, variant={"voice": "V1"}
         )
         assert (observed_arm.dials, observed_arm.connected, observed_arm.concluded) == (
             1,

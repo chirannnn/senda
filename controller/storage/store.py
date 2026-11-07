@@ -13,7 +13,7 @@ from uuid import UUID
 
 from alembic import command
 from alembic.config import Config
-from sqlalchemy import cast, func, or_, select, text
+from sqlalchemy import cast, exists, func, or_, select, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 from sqlalchemy.engine import URL, Connection, make_url
@@ -24,6 +24,7 @@ from sqlalchemy.ext.asyncio import (
     async_sessionmaker,
     create_async_engine,
 )
+from sqlalchemy.orm import aliased
 
 from controller.errors import ConfigurationError
 from controller.storage.models import (
@@ -349,6 +350,13 @@ class DatabaseStore:
         definitions: list[dict[str, object]],
     ) -> None:
         """Persist immutable ordered rules; changed rules need a new version."""
+        if (
+            not workflow_id
+            or isinstance(config_version, bool)
+            or not isinstance(config_version, int)
+            or config_version < 0
+        ):
+            raise ValueError("workflow ID and nonnegative config version are required")
         async with self.transaction() as session:
             await self.ensure_workflow(session, workflow_id)
             seen_ids: set[str] = set()
@@ -432,8 +440,12 @@ class DatabaseStore:
         """Aggregate bounded SQL facts for a half-open event-time window."""
         if not workflow_id:
             raise ValueError("workflow ID is required")
-        if config_version is not None and config_version < 0:
-            raise ValueError("config version must be nonnegative")
+        if config_version is not None and (
+            isinstance(config_version, bool)
+            or not isinstance(config_version, int)
+            or config_version < 0
+        ):
+            raise ValueError("config version must be a nonnegative integer")
         if start_at is not None and start_at.tzinfo is None:
             raise ValueError("start timestamp must include a timezone")
         if end_at is not None and end_at.tzinfo is None:
@@ -464,6 +476,56 @@ class DatabaseStore:
         async with self._sessions() as session:
             row = (await session.execute(statement)).one()
             return tuple(int(value) for value in row)  # type: ignore[return-value]
+
+    async def list_call_context_after(
+        self, event_id: int, *, limit: int, workflow_id: str
+    ) -> list[tuple[KpiFact, KpiFact | None, bool]]:
+        """Join calls to the latest preceding lead and flag earlier person enrollments."""
+        if event_id < 0 or limit < 1 or not workflow_id:
+            raise ValueError(
+                "event cursor, positive limit and workflow ID are required"
+            )
+        call = aliased(KpiFact)
+        lead_candidate = aliased(KpiFact)
+        lead = aliased(KpiFact)
+        prior_lead = aliased(KpiFact)
+        matching_lead_id = (
+            select(func.max(lead_candidate.source_event_id))
+            .where(
+                lead_candidate.event_type == "lead",
+                lead_candidate.workflow_id == call.workflow_id,
+                lead_candidate.lead_id == call.lead_id,
+                lead_candidate.source_event_id < call.source_event_id,
+            )
+            .correlate(call)
+            .scalar_subquery()
+        )
+        is_returning = exists(
+            select(1)
+            .select_from(prior_lead)
+            .where(
+                prior_lead.event_type == "lead",
+                prior_lead.workflow_id == lead.workflow_id,
+                prior_lead.person_id == lead.person_id,
+                prior_lead.source_event_id < lead.source_event_id,
+            )
+            .correlate(lead)
+        )
+        statement = (
+            select(call, lead, is_returning)
+            .outerjoin(lead, lead.source_event_id == matching_lead_id)
+            .where(
+                call.event_type == "call",
+                call.workflow_id == workflow_id,
+                call.source_event_id > event_id,
+            )
+            .order_by(call.source_event_id)
+            .limit(limit)
+        )
+        self._ensure_open()
+        async with self._sessions() as session:
+            result = await session.execute(statement)
+            return [(row[0], row[1], bool(row[2])) for row in result]
 
     async def create_run(
         self, session: AsyncSession, details: dict[str, object] | None = None

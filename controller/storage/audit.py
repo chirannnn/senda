@@ -6,7 +6,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import and_, or_, select
+from sqlalchemy import and_, cast, or_, select
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from controller.storage.models import AuditRecord
@@ -48,6 +49,7 @@ class AuditQuery:
     resource_type: str | None = None
     resource_id: str | None = None
     config_version: int | None = None
+    cohort_id: str | None = None
     approval_id: str | None = None
     outcome: str | None = None
     start_at: datetime | None = None
@@ -138,8 +140,12 @@ class AuditLog:
             conditions.append(AuditRecord.resource_id == query.resource_id)
         if query.config_version is not None:
             conditions.append(
-                AuditRecord.evidence["config_version"].as_integer()
-                == query.config_version
+                cast(AuditRecord.evidence["config_version"], JSONB)
+                == cast(query.config_version, JSONB)
+            )
+        if query.cohort_id is not None:
+            conditions.append(
+                AuditRecord.evidence["cohort_id"].as_string() == query.cohort_id
             )
         if query.approval_id is not None:
             conditions.append(

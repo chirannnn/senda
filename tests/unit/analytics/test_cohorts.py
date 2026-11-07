@@ -57,3 +57,8 @@ def test_cohort_identity_includes_workflow_and_config_version():
 def test_malformed_cohort_rules_fail_closed(config):
     with pytest.raises((TypeError, ValueError)):
         definitions_from_config("wf", 0, config)
+
+
+def test_config_version_must_be_an_integer_not_a_boolean():
+    with pytest.raises(ValueError, match="config version"):
+        definitions_from_config("wf", True, {"cohorts": []})

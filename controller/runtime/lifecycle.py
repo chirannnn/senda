@@ -1,8 +1,4 @@
-"""Minimal simulator lifecycle for the runtime foundation chunk.
-
-Event ingestion and durable advance-intent reconciliation are deliberately
-deferred to their planned chunks. An ambiguous advance therefore fails closed.
-"""
+"""Simulator lifecycle with durable event ingestion and fact derivation."""
 
 from __future__ import annotations
 
@@ -11,6 +7,7 @@ import logging
 from dataclasses import dataclass
 from typing import Any, Protocol
 
+from controller.analytics.facts import KpiFactProcessor
 from controller.config import Settings
 from controller.errors import AmbiguousPostError, SimulatorError, SimulatorHTTPError
 from controller.ingestion.runner import (
@@ -58,9 +55,11 @@ async def run_controller(
         extra={"event": "startup_ready", "workflow_count": len(workflows)},
     )
     ingestion = EventIngestionService(simulator) if store is not None else None
+    fact_processor = KpiFactProcessor(store) if store is not None else None
     if store is not None and ingestion is not None:
         await ingestion.ingest_available_chunks(store)
         await reconcile_pending_advances(simulator, store, service=ingestion)
+        await _process_facts(fact_processor)
         state = await simulator.get_state()
     if _is_finished(state):
         return RuntimeOutcome(completed=True, stopped=False)
@@ -70,6 +69,7 @@ async def run_controller(
             result = await advance_and_ingest(
                 simulator, store, settings.advance_minutes, service=ingestion
             )
+            await _process_facts(fact_processor)
             if result.finished:
                 return RuntimeOutcome(completed=True, stopped=False)
             logger.info(
@@ -114,6 +114,21 @@ async def run_controller(
             return RuntimeOutcome(completed=True, stopped=False)
 
     return RuntimeOutcome(completed=False, stopped=True)
+
+
+async def _process_facts(processor: KpiFactProcessor | None) -> None:
+    if processor is None:
+        return
+    scanned, inserted = await processor.process_available()
+    if scanned:
+        logger.info(
+            "persisted event-derived KPI facts",
+            extra={
+                "event": "kpi_facts_processed",
+                "source_events_scanned": scanned,
+                "facts_inserted": inserted,
+            },
+        )
 
 
 def _is_finished(payload: dict[str, Any]) -> bool:

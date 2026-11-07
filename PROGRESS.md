@@ -2,7 +2,7 @@
 
 ## Overall status: IN PROGRESS — CHUNK 4
 
-**Current phase:** Chunk 3 reliable event ingestion complete; Chunk 4 in progress
+**Current phase:** Chunk 3 reliable event ingestion complete; Chunk 4 implementation complete, final commit recording pending
 **Current chunk:** 4 — History, KPI facts, and audit query
 **Current next action:** Complete Chunk 4 subtask 5 — end-to-end integration and hardening.
 
@@ -28,8 +28,8 @@
 | 1. Historical query foundation | COMPLETE | `pytest -q tests/integration/storage/test_history_queries.py` — 2 passed; Ruff check/format and `git diff --check` passed | `79caf3d` |
 | 2. KPI fact derivation | COMPLETE | analytics unit: 8 passed; analytics PostgreSQL integration: 2 passed; history/storage/schema tests: 18 passed; Alembic upgrade/check and Ruff passed | `bf4e93b` |
 | 3. KPI calculations and cohorts | COMPLETE | analytics unit: 16 passed; analytics PostgreSQL integration: 3 passed; history/storage/schema tests: 19 passed; Alembic and Ruff passed | `237d6b2` |
-| 4. Read-only audit queries | COMPLETE | audit unit: 3 passed; PostgreSQL query integration: 1 passed; storage regression suite: 11 passed; Alembic check and Ruff passed | pending |
-| 5. Integration and hardening | NOT STARTED | — | — |
+| 4. Read-only audit queries | COMPLETE | audit unit: 3 passed; PostgreSQL query integration: 1 passed; storage regression suite: 11 passed; Alembic check and Ruff passed | `f640e9b` |
+| 5. Integration and hardening | COMPLETE | analytics unit: 17 passed; analytics integration: 5 passed; full suite: 123 passed in 46.61s; Ruff, format, compileall and repeated Alembic upgrade/check passed | pending |
 
 Subtask 1 adds bounded keyset pagination over persisted event IDs, optional workflow filtering, and discovery of workflow IDs observed in event payloads. It does not assume consecutive event IDs or merge history/live rows by arithmetic; event ID uniqueness already deduplicates both streams in storage. Integration tests used an isolated PostgreSQL 18 cluster under the system temporary directory; Docker was not started and the existing host/Compose databases were not changed.
 
@@ -38,6 +38,12 @@ Subtask 2 adds migration `0002_kpi_facts`, provenance-linked per-event facts and
 Subtask 3 adds migration `0003_cohort_definitions`, with immutable rules keyed by workflow/config/cohort and a unique order per config version. The canonical `CohortDefinition` representation is constructed only from an HTTP-supplied config snapshot, applies ordered AND/OR predicates from the documented config shape, and includes the documented default fallback. Persisting an unchanged version is idempotent; trying to change its predicate without incrementing config version fails. KPI aggregation runs in SQL and can filter by workflow, half-open event-time range, config version, observed cohort, and exact recorded variant. Pickup is `connected / dials`; engagement is `concluded / connected`; zero denominators return `None`. PostgreSQL integration verified counts of 2 dials, 1 connected call, 1 concluded call, and 20 uploaded leads (0.5 pickup, 1.0 engagement). Unit tests cover no-dial and zero-connected cases. No scenario was run.
 
 Subtask 4 adds bounded, read-only audit filtering by workflow, time, actor, action, config version, approval ID, outcome, and resource, with deterministic `(occurred_at, UUID)` keyset continuation and page sizes capped at 500. Migration `0004_audit_query_indexes` replaces the less useful workflow/time index with ordered workflow/time, workflow/actor/time, and workflow/action/time indexes; the prior migration history remains intact. PostgreSQL verified tied timestamp ordering across pages, exact evidence filters, and unchanged row count. Actor and outcome are read from the controller's own audit fields/evidence; query results do not mutate audit history.
+
+Subtask 5 completes the persisted-event → fact → lead/call context → KPI → cohort-scoped audit path. Lead/call context joins only the latest lead record preceding a call, reports a missing join explicitly, and detects returning people only when an earlier lead record for that person precedes the current lead. Historical attribution reconstructs the cohort from that lead's stored features and compares it to observed call exposure. The same `CohortDefinition` is accepted by KPI calculation and the cohort-scoped audit adapter. Runtime invokes fact derivation after startup/reconciliation and each successfully ingested advance. PostgreSQL restart/replay tests show a fresh store reads committed facts and a repeat derives zero duplicates; injected FK failure leaves the scan cursor at 0. The final full suite and code/schema checks passed.
+
+Synthetic PostgreSQL 18 analytics measurement on the Windows development host: 5,000 call events scanned and 5,000 facts inserted in bounded pages of 250; cursor advanced to event ID `990004999`; measured processing rate 557 events/s; peak traced Python memory 3.94 MiB; one filtered SQL aggregate took 10.3 ms and returned 5,000 dials, 2,500 connected and 1,250 concluded. This is a synthetic local observation, not a public load-scenario or grading-host result. No public scenario was run. Automatic collection of historic cohort predicates from config-history responses remains unverified; the canonical representation accepts a permitted config snapshot, but runtime does not guess undocumented response fields.
+
+Final Chunk 4 checks: `pytest -q tests/unit/analytics/` — 17 passed; `pytest -q tests/integration/analytics/` — 5 passed; `pytest -q` — 123 passed in 46.61s; `ruff check .` passed; `ruff format --check .` reported 65 files already formatted; `python -m compileall -q controller tests` passed; Alembic `upgrade head` repeated and `check` reported no new operations; `git diff --check` passed. PostgreSQL tests used a temporary PostgreSQL 18 cluster and a disposable database under system temporary storage; Docker/Compose and the assessment simulator were not run.
 
 ## Chunk 3 subtask progress
 
@@ -59,7 +65,7 @@ Subtask 4 adds bounded, read-only audit filtering by workflow, time, actor, acti
 - Generated development-only credentials are stored outside the repository at `%LOCALAPPDATA%\FormiAgenticUniverse\postgres-dev.env`; credential values were not displayed. Compose config validation passed.
 - Container became healthy. Async SQLAlchemy connection succeeded against PostgreSQL **18.6**. A temporary row was written, the container was restarted, and the row was read back successfully. Temporary probe table was then removed. Volume mount inspected and confirmed.
 - `requirements.txt` now includes `SQLAlchemy[asyncio]`, Alembic and asyncpg so the selected database driver/async support is reproducible. No assessment database connection was specified in the assignment materials or configured in the inspected environment.
-- Chunk 1 and Chunk 2 are complete. Chunk 3 event ingestion and later behavior have not started.
+- Chunks 1–3 are complete. Chunk 4 history, KPI facts and audit queries are complete. Chunk 5 has not started.
 
 ## Chunk 1 subtask progress
 
@@ -179,7 +185,7 @@ Do not rewrite prior history.
 
 ## Next action
 
-Chunk 3 is complete. Next: Chunk 4 — History, KPI facts, and audit query. Chunk 4 has not started.
+Chunk 4 is complete. Next: Chunk 5 — Governance lifecycle. Do not start Chunk 5 before review/approval.
 
 ### Chunk 3 measured evidence (synthetic HTTP stream, PostgreSQL 18)
 

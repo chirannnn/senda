@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 
+from controller.analytics.cohorts import CohortDefinition
 from controller.storage.store import DatabaseStore
 
 
@@ -49,10 +50,20 @@ class KpiCalculator:
         *,
         config_version: int | None = None,
         cohort_id: str | None = None,
+        cohort: CohortDefinition | None = None,
         variant: dict[str, object] | None = None,
         start_at: datetime | None = None,
         end_at: datetime | None = None,
     ) -> KpiSummary:
+        if cohort is not None:
+            if cohort.workflow_id != workflow_id:
+                raise ValueError("cohort workflow does not match KPI workflow")
+            if config_version is not None and config_version != cohort.config_version:
+                raise ValueError("cohort config version conflicts with KPI filter")
+            if cohort_id is not None and cohort_id != cohort.cohort_id:
+                raise ValueError("cohort ID conflicts with KPI filter")
+            config_version = cohort.config_version
+            cohort_id = cohort.cohort_id
         totals = await self._store.query_kpi_totals(
             workflow_id,
             config_version=config_version,

@@ -8,6 +8,7 @@ import httpx
 import pytest
 from sqlalchemy.exc import SQLAlchemyError
 
+from controller.analytics.kpis import KpiCalculator
 from controller.clients.simulator import SimulatorClient
 from controller.config import Settings
 from controller.errors import AmbiguousPostError, SimulatorError
@@ -278,16 +279,61 @@ async def test_runtime_bootstraps_history_then_finishes_after_live_ingestion(
             return httpx.Response(
                 200,
                 content=_body(
-                    {"event_id": 1, "type": "campaign_created"},
-                    {"event_id": 3, "type": "lead"},
+                    {
+                        "event_id": 1,
+                        "type": "campaign_created",
+                        "ts": "2027-01-04T00:00:00+05:30",
+                        "workflow_id": "wf-runtime",
+                        "campaign_id": "campaign-1",
+                        "leads": 2,
+                        "config_version_at_creation": 1,
+                    },
+                    {
+                        "event_id": 3,
+                        "type": "lead",
+                        "ts": "2027-01-04T00:01:00+05:30",
+                        "workflow_id": "wf-runtime",
+                        "campaign_id": "campaign-1",
+                        "lead_id": "lead-1",
+                        "person_id": "person-1",
+                        "features": {"lang": "hi", "age_band": "46-60"},
+                    },
                 ),
             )
         if request.url.path == "/events/chunks/4":
             return httpx.Response(
                 200,
                 content=_body(
-                    {"event_id": 9, "type": "call"},
-                    {"event_id": 11, "type": "call"},
+                    {
+                        "event_id": 9,
+                        "type": "call",
+                        "ts": "2027-01-04T00:15:00+05:30",
+                        "workflow_id": "wf-runtime",
+                        "campaign_id": "campaign-1",
+                        "lead_id": "lead-1",
+                        "person_id": "person-1",
+                        "config_version": 1,
+                        "cohort_id": "default",
+                        "variant": {"voice": "V1"},
+                        "connected": True,
+                        "engaged": False,
+                        "disposition": "short_hangup",
+                    },
+                    {
+                        "event_id": 11,
+                        "type": "call",
+                        "ts": "2027-01-04T00:30:00+05:30",
+                        "workflow_id": "wf-runtime",
+                        "campaign_id": "campaign-1",
+                        "lead_id": "lead-2",
+                        "person_id": "person-2",
+                        "config_version": 1,
+                        "cohort_id": "default",
+                        "variant": {"voice": "V1"},
+                        "connected": True,
+                        "engaged": True,
+                        "disposition": "concluded_interested",
+                    },
                 ),
             )
         if request.url.path == "/sim/advance":
@@ -327,6 +373,14 @@ async def test_runtime_bootstraps_history_then_finishes_after_live_ingestion(
     stored = [await postgres_store.get_event(event_id) for event_id in (1, 3, 9, 11)]
     assert all(stored)
     assert requests.count(("POST", "/sim/advance")) == 1
+    assert await postgres_store.get_analytics_cursor("kpi-facts-v1") == 11
+    summary = await KpiCalculator(postgres_store).calculate("wf-runtime")
+    assert (summary.dials, summary.connected, summary.concluded, summary.uploaded) == (
+        2,
+        2,
+        1,
+        2,
+    )
 
 
 @pytest.mark.anyio

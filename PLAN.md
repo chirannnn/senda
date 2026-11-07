@@ -4,7 +4,7 @@
 
 Build a single-process controller that runs `./run.sh <SIM_URL>` to completion, consumes only the simulator HTTP contract, optimizes each workflow's declared primary KPI while protecting its separate guardrail, submits every controller-initiated customer-facing change through governance, and keeps a restart-safe audit trail. The mandatory delivery floor is unattended `public_01_dev` and `public_02_incidents`, C12 auditability, constraint compliance, and completed `SUBMISSION.md`. Other capabilities are scoped below.
 
-This reviewed plan is the implementation specification. Chunks 1–3 are complete; Chunk 4 has not started. The approved infrastructure direction is Python 3.12 locally in `.venv`, PostgreSQL 18 in Docker for local development with a persistent named volume, SQLAlchemy async + asyncpg, and Alembic. If an assessment database is provided at execution, use it; otherwise use the configured local development PostgreSQL environment. Statistical operating point and optional capability scope remain unapproved until review.
+This reviewed plan is the implementation specification. Chunks 1–4 are complete; Chunk 5 has not started. The approved infrastructure direction is Python 3.12 locally in `.venv`, PostgreSQL 18 in Docker for local development with a persistent named volume, SQLAlchemy async + asyncpg, and Alembic. If an assessment database is provided at execution, use it; otherwise use the configured local development PostgreSQL environment. Statistical operating point and optional capability scope remain unapproved until review.
 
 ## 2. Repository findings and verified contract
 
@@ -135,7 +135,7 @@ Persist incident/proposal states so restart recovers every phase. Never infer su
 
 ## 11. Incremental implementation chunks
 
-Chunks 1–3 are complete; Chunk 4 has not started. Each remaining chunk must end in a working, testable repository. Paths are planned new files unless existing files are named. Never modify `sim/`.
+Chunks 1–4 are complete; Chunk 5 has not started. Each remaining chunk must end in a working, testable repository. Paths are planned new files unless existing files are named. Never modify `sim/`.
 
 ### Chunk 1 — Runtime and launcher
 - **Objective/why:** replace naive launch with unattended `run.sh <SIM_URL>` and clean lifecycle.
@@ -172,14 +172,14 @@ Chunks 1–3 are complete; Chunk 4 has not started. Each remaining chunk must en
 
 ### Chunk 4 — History, KPI and audit query
 - **Objective/why:** correct denominators and explainability.
-- **Files:** create `controller/metrics.py`, `controller/cohorts.py`, `controller/queries.py`; modify processor/store; tests.
+- **Files implemented:** `controller/analytics/{history,facts,kpis,cohorts,audit}.py`; bounded event and KPI/cohort query methods in `controller/storage/`; migrations `0002_kpi_facts`, `0003_cohort_definitions`, `0004_audit_query_indexes`; unit, integration and runtime tests.
 - **Dependencies:** Chunk 3.
-- **Steps:** join lead/call; distinct KPIs; exposure attribution; canonical versioned cohort; audit query by workflow/time/config.
-- **Unit:** KPI denominators/zero-connected; returning people; ordering; history/live dedupe; same canonical cohort ID/predicate/version used by attribution, experiment inputs and audit query. **Integration:** independently count fetched public events. **Failure:** missing/out-of-order lead remains explicit, no invented feature.
-- **Acceptance:** separate KPI numerator/denominator; actual arms only; query includes actor, reason, approval, outcome.
-- **Expected:** `pytest -q tests/unit/test_metrics.py` and sample audit query.
-- **Commit:** `feat: derive auditable workflow metrics from events`.
-- **PROGRESS:** definitions, joins, query evidence.
+- **Steps completed:** bounded keyset event/workflow queries; atomic per-page fact derivation/cursor; lead-to-call join using only preceding leads; observed cohort/variant exposure; versioned ordered cohort rules; separate KPI aggregates; read-only audit keyset browsing.
+- **Unit:** KPI denominators/zero-connected, cohort predicate order and validation, malformed facts, audit filters and cursors. **Integration:** persisted events through restart-safe facts, cohort match, KPI and audit; PostgreSQL migration and query checks. **Failure:** invalid/incomplete events remain explicitly classified; failed fact transactions do not advance cursors; missing lead joins remain explicit.
+- **Acceptance:** pickup is `connected / dials`; engagement is `concluded / connected`; actual call variant and observed cohort are preserved; audit returns workflow, actor, reason, approval/outcome evidence; all reads are bounded and ordered.
+- **Verified:** analytics unit 17 passed; analytics integration 5 passed; full suite 123 passed; `ruff check .`, `ruff format --check .`, compileall, repeated Alembic upgrade/check, and `git diff --check` passed. Synthetic local PostgreSQL measurement: 5,000 facts inserted, checkpoint 990004999, 557 events/s, 3.94 MiB peak traced Python memory, 10.3 ms filtered aggregate. Public scenarios and grading-host performance remain unrun.
+- **Commits:** `79caf3d feat(analytics): add historical event queries`; `bf4e93b feat(analytics): derive durable KPI facts`; `237d6b2 feat(analytics): add KPI calculations and cohorts`; `f640e9b feat(audit): add historical audit queries`; Chunk 4 hardening commit is being recorded.
+- **PROGRESS:** actual formulas, event/fact counts, checkpoint/restart evidence, failures, synthetic throughput and limitations are in `PROGRESS.md`.
 
 ### Chunk 5 — Governance lifecycle
 - **Objective/why:** safe governed writes and recovery.
