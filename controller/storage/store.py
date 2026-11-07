@@ -196,6 +196,37 @@ class DatabaseStore:
         async with self._sessions() as session:
             return await session.scalar(select(func.max(SimulatorEvent.event_id)))
 
+    async def list_events_after(
+        self, event_id: int, *, limit: int, workflow_id: str | None = None
+    ) -> list[SimulatorEvent]:
+        """Read a bounded, event-ID ordered page for restartable derivation."""
+        self._ensure_open()
+        if event_id < 0 or limit < 1:
+            raise ValueError("event cursor must be nonnegative and limit positive")
+        statement = select(SimulatorEvent).where(SimulatorEvent.event_id > event_id)
+        if workflow_id is not None:
+            statement = statement.where(
+                SimulatorEvent.payload["workflow_id"].as_string() == workflow_id
+            )
+        statement = statement.order_by(SimulatorEvent.event_id).limit(limit)
+        async with self._sessions() as session:
+            return list((await session.scalars(statement)).all())
+
+    async def list_workflow_ids(self) -> list[str]:
+        """List workflow IDs observed in persisted event payloads."""
+        self._ensure_open()
+        workflow_id = (
+            SimulatorEvent.payload["workflow_id"].as_string().label("workflow_id")
+        )
+        statement = (
+            select(workflow_id)
+            .where(workflow_id.is_not(None))
+            .distinct()
+            .order_by(workflow_id)
+        )
+        async with self._sessions() as session:
+            return list((await session.scalars(statement)).all())
+
     async def create_run(
         self, session: AsyncSession, details: dict[str, object] | None = None
     ) -> UUID:

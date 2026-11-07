@@ -1,10 +1,10 @@
 # Progress Tracking — Outcome-First Agent Loop
 
-## Overall status: COMPLETE — CHUNK 3
+## Overall status: IN PROGRESS — CHUNK 4
 
-**Current phase:** Chunk 3 reliable event ingestion complete
-**Current chunk:** 3 — Reliable event ingestion
-**Current next action:** Chunk 4 — History, KPI facts, and audit query (not started).
+**Current phase:** Chunk 3 reliable event ingestion complete; Chunk 4 in progress
+**Current chunk:** 4 — History, KPI facts, and audit query
+**Current next action:** Complete Chunk 4 subtask 2 — durable KPI fact derivation.
 
 ## Implementation progress
 
@@ -13,13 +13,25 @@
 | 1 | Runtime and launcher | COMPLETE | `cfc28d2`, `730cf26`, `71bdd8a` (and earlier foundation/config commits listed below) |
 | 2 | Durable schema and audit | COMPLETE | `aab9708`, `2443889`, `31af0ea`, `a3d7a6b`, `e88ed27` |
 | 3 | Simulator chunk ingestion | COMPLETE | `d921490`, `b6b88f6`, `6bdce40`, `f975203`, `09bf0b6`, `adf5b54` |
-| 4 | History, KPI facts, audit query | NOT STARTED | — |
+| 4 | History, KPI facts, audit query | IN PROGRESS | — |
 | 5 | Governance lifecycle | NOT STARTED | — |
 | 6 | Statistical comparison | NOT STARTED | — |
 | 7 | Public incident workflow | NOT STARTED | — |
 | 8 | Crash recovery demonstration | NOT STARTED | — |
 | 9 | Load and observability | NOT STARTED | — |
 | 10 | Submission and final grading | NOT STARTED | — |
+
+## Chunk 4 subtask progress
+
+| Subtask | Status | Validation | Commit |
+|---|---|---|---|
+| 1. Historical query foundation | COMPLETE | `pytest -q tests/integration/storage/test_history_queries.py` — 2 passed against a temporary local PostgreSQL 18 cluster; Ruff check/format and `git diff --check` passed | pending |
+| 2. KPI fact derivation | NOT STARTED | — | — |
+| 3. KPI calculations and cohorts | NOT STARTED | — | — |
+| 4. Read-only audit queries | NOT STARTED | — | — |
+| 5. Integration and hardening | NOT STARTED | — | — |
+
+Subtask 1 adds bounded keyset pagination over persisted event IDs, optional workflow filtering, and discovery of workflow IDs observed in event payloads. It does not assume consecutive event IDs or merge history/live rows by arithmetic; event ID uniqueness already deduplicates both streams in storage. Integration tests used an isolated PostgreSQL 18 cluster under the system temporary directory; Docker was not started and the existing host/Compose databases were not changed.
 
 ## Chunk 3 subtask progress
 
