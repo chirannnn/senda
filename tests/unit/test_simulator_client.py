@@ -273,3 +273,45 @@ async def test_malformed_approval_response_fails_closed():
     async with client:
         with pytest.raises(SimulatorError, match="required identity fields"):
             await client.submit_approval({"proposal_id": "proposal-1"})
+
+
+@pytest.mark.anyio
+async def test_apply_posts_exact_approval_id_once_and_validates_result():
+    seen = []
+
+    def handler(request):
+        seen.append((request.method, request.url.path, request.read()))
+        return httpx.Response(
+            200,
+            json={"workflow_id": "wf-1", "version": 3, "changed_dims": ["voice"]},
+        )
+
+    client = SimulatorClient(_settings(), transport=httpx.MockTransport(handler))
+    async with client:
+        result = await client.apply_approval("wf-1", "apr_00001")
+
+    assert result["version"] == 3
+    assert seen == [
+        (
+            "POST",
+            "/workflows/wf-1/apply",
+            b'{"approval_id":"apr_00001"}',
+        )
+    ]
+
+
+@pytest.mark.anyio
+async def test_ambiguous_apply_post_is_never_retried():
+    attempts = 0
+
+    def handler(request):
+        nonlocal attempts
+        attempts += 1
+        raise httpx.ReadTimeout("response lost", request=request)
+
+    client = SimulatorClient(_settings(), transport=httpx.MockTransport(handler))
+    async with client:
+        with pytest.raises(AmbiguousPostError, match="do not retry it blindly"):
+            await client.apply_approval("wf-1", "apr_00001")
+
+    assert attempts == 1

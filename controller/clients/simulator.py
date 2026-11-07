@@ -200,6 +200,47 @@ class SimulatorClient:
             raise ValueError("approval ID is required")
         return _validate_approval(await self._get_json(f"/approvals/{approval_id}"))
 
+    async def apply_approval(
+        self, workflow_id: str, approval_id: str
+    ) -> dict[str, Any]:
+        """Apply a known approval once; callers reconcile ambiguous outcomes."""
+        if not workflow_id or not approval_id:
+            raise ValueError("workflow and approval IDs are required")
+        path = f"/workflows/{workflow_id}/apply"
+        try:
+            response = await self._require_client().post(
+                path, json={"approval_id": approval_id}
+            )
+        except httpx.RequestError as exc:
+            raise AmbiguousPostError(
+                path, f"transport failure ({type(exc).__name__})"
+            ) from None
+        if 500 <= response.status_code <= 599:
+            raise AmbiguousPostError(
+                path,
+                f"server returned HTTP {response.status_code}; reconcile config history",
+            )
+        self._raise_for_status(response, path)
+        try:
+            payload = response.json()
+        except ValueError:
+            raise AmbiguousPostError(
+                path, "successful response was not valid JSON"
+            ) from None
+        if (
+            not isinstance(payload, dict)
+            or payload.get("workflow_id") != workflow_id
+            or isinstance(payload.get("version"), bool)
+            or not isinstance(payload.get("version"), int)
+            or payload["version"] < 0
+            or not isinstance(payload.get("changed_dims"), list)
+            or any(not isinstance(item, str) for item in payload["changed_dims"])
+        ):
+            raise AmbiguousPostError(
+                path, "successful response did not match the documented apply result"
+            )
+        return payload
+
     async def list_chunks(self, kind: str, after: int = -1) -> list[dict[str, Any]]:
         """List event descriptors through the documented read endpoint."""
         if kind not in {"events", "history"}:
