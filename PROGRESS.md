@@ -1,10 +1,10 @@
 # Progress Tracking — Outcome-First Agent Loop
 
-## Overall status: IN PROGRESS — CHUNK 5
+## Overall status: COMPLETE — CHUNK 5
 
 **Current phase:** Chunk 5 governance lifecycle
 **Current chunk:** 5 — Governance lifecycle
-**Current next action:** Subtask 1 complete; continue with durable governance storage.
+**Current next action:** Chunk 5 complete; Chunk 6 has not started.
 
 ## Implementation progress
 
@@ -14,7 +14,7 @@
 | 2 | Durable schema and audit | COMPLETE | `aab9708`, `2443889`, `31af0ea`, `a3d7a6b`, `e88ed27` |
 | 3 | Simulator chunk ingestion | COMPLETE | `d921490`, `b6b88f6`, `6bdce40`, `f975203`, `09bf0b6`, `adf5b54` |
 | 4 | History, KPI facts, audit query | COMPLETE | `79caf3d`, `bf4e93b`, `237d6b2`, `f640e9b`, `bd1f94b`, `b87a39b` |
-| 5 | Governance lifecycle | IN PROGRESS | subtask 1: proposal validation and lifecycle model |
+| 5 | Governance lifecycle | COMPLETE | `29d7e81`, `d04a0bf`, `40aca99`, `feb3c77`, `50fbc35`, this subtask's final hardening commit |
 | 6 | Statistical comparison | NOT STARTED | — |
 | 7 | Public incident workflow | NOT STARTED | — |
 | 8 | Crash recovery demonstration | NOT STARTED | — |
@@ -25,12 +25,12 @@
 
 | Subtask | Status | Validation | Commit |
 |---|---|---|---|
-| 1. Proposal validation and lifecycle model | COMPLETE | Focused governance unit tests: 31 passed; Ruff check/format and `git diff --check` passed | pending commit |
-| 2. Durable governance storage | COMPLETE | Isolated PostgreSQL integration and schema tests: 10 passed; migration `0005` applied by the test fixture; Ruff check/format and `git diff --check` passed | pending commit |
-| 3. Approval submission and reconciliation | COMPLETE | Focused client/governance tests: 48 passed with isolated PostgreSQL; Ruff check/format and `git diff --check` passed | pending commit |
-| 4. Approval state machine | COMPLETE | Focused state-machine plus submission tests: 47 passed with isolated PostgreSQL; Ruff check/format and `git diff --check` passed | pending commit |
-| 5. Stale checks and safe apply | COMPLETE | Focused governance/client/PostgreSQL suite: 67 passed; Ruff check/format and `git diff --check` passed | pending commit |
-| 6. Integration and hardening | NOT STARTED | — | — |
+| 1. Proposal validation and lifecycle model | COMPLETE | Focused governance unit tests: 31 passed; Ruff check/format and `git diff --check` passed | `29d7e81` |
+| 2. Durable governance storage | COMPLETE | Isolated PostgreSQL integration and schema tests: 10 passed; migration `0005` applied; Ruff check/format and `git diff --check` passed | `d04a0bf` |
+| 3. Approval submission and reconciliation | COMPLETE | Focused client/governance tests: 48 passed with isolated PostgreSQL; Ruff check/format and `git diff --check` passed | `40aca99` |
+| 4. Approval state machine | COMPLETE | Focused state-machine plus submission tests: 47 passed with isolated PostgreSQL; Ruff check/format and `git diff --check` passed | `feb3c77` |
+| 5. Stale checks and safe apply | COMPLETE | Focused governance/client/PostgreSQL suite: 67 passed; Ruff check/format and `git diff --check` passed | `50fbc35` |
+| 6. Integration and hardening | COMPLETE | Full suite: 189 passed; Ruff check, format, compileall, `git diff --check`, Alembic check and head verification passed | this subtask's final hardening commit |
 
 Subtask 1 adds an immutable approval request payload matching the documented required fields, with optional evidence and expiry. It validates values and JSON compatibility and exposes a deterministic SHA-256 hash for detecting payload changes under a stable proposal ID. The lifecycle model encodes proposal, approval, apply, stale, lapse, and reconciliation-required states; same-state observations are idempotent and terminal outcomes cannot transition onward. Focused tests cover accepted/rejected fields, hash stability, valid transitions, invalid transitions, and terminal states. The isolated server's `/openapi.json` was queried: these routes publish generic JSON object bodies and no concrete response schemas. Exact approval fields are therefore validated against `docs/SIMULATOR.md` and the route/handler behavior, not inferred from OpenAPI schemas.
 
@@ -41,6 +41,10 @@ Subtask 3 adds GET client operations for current config, config history, and app
 Subtask 4 adds bounded approval polling with per-read timeouts and an event reconciliation function for persisted `approval_decided` payloads. Both use the same transition validator and durable proposal updater; repeated same-status observations do not add duplicate audit rows. Unknown approval events are ignored until the approval ID is known, and workflow mismatches fail closed. Tests cover pending, approved, rejected, expired, applied, and lapsed observations, polling limits/idempotence, event application, and invalid event identity. The focused state-machine/submission suite passed 47 tests.
 
 Subtask 5 adds a single-attempt apply client call and the approved-proposal apply path. It rereads approval identity/status and current workflow version, marks stale proposals without sending a POST, then atomically persists apply intent, applying status, and audit evidence before posting the approval ID. It confirms application from matching config-history proposal ID, approval ID, actor, and version, along with the current config version. If an ambiguous response cannot be resolved, it stops in `reconciliation_required`; it never retries apply because the simulator contract does not document lost-response idempotency. PostgreSQL/mock-HTTP cases cover successful apply, stale version, lost response after remote application, unresolved apply, duplicate invocation, and restart with an existing intent. The focused suite passed 67 tests.
+
+Subtask 6 adds end-to-end pending → approved → applied coverage, including a store reopen after the approval decision and before apply; checks exact diff, actor, reason, and outcome in audit evidence; covers restart before apply and after remote apply; and hardens proposal values against mutation after hashing. README and this file now describe the implemented boundary. Final verification on the isolated PostgreSQL 18 test cluster: `pytest -q` — 189 passed; `ruff check .` — passed; `ruff format --check .` — 76 files already formatted; `python -m compileall -q controller tests` — passed; `git diff --check` — passed; Alembic `check` — no new operations; head is `0005_governance_proposals`. The first full-suite run exposed the old expected Alembic revision in a restart test; it was updated from `0004` to `0005` and the full suite then passed. No public scenario or live assessment simulator was run, and no simulator source was modified.
+
+Chunk 5 code is not yet wired to an autonomous proposal generator or the runtime loop; it is callable governance lifecycle functionality. Decision generation remains later work. Actual OpenAPI has only generic object schemas for these routes, so response validation uses documented examples and observed route-handler fields. Ambiguous apply remains manual-review-only because the simulator does not document safe retry semantics. No real OS process-kill demonstration was performed in this chunk.
 
 ## Chunk 4 subtask progress
 

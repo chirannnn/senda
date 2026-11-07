@@ -154,6 +154,22 @@ Facts and cohort rules are durable in Alembic migrations `0002_kpi_facts` and
 query latency at load scale, and automatic collection of historical cohort predicates from config-history
 responses have not yet been verified. No scenario YAML or simulator run-directory data is used by this code.
 
+### Governed proposals (Chunk 5)
+
+The governance package validates and hashes approval payloads, persists proposal state and external-operation
+intents, submits through `POST /approvals`, and reconciles approval state from lookup responses or supplied
+`approval_decided` events. Before apply, it rereads the approval and current config version, persists an apply
+intent, then calls `POST /workflows/{id}/apply` with the approval ID. Ambiguous apply results are reconciled
+against approval status and config history; if the evidence is inconclusive, the proposal is marked for
+manual reconciliation and is not retried. These are callable governance components; the runtime does not yet
+generate proposals or automatically invoke this lifecycle. The current simulator contract does not document
+apply idempotency after a lost response, so the controller never retries an ambiguous apply.
+
+Proposal state is stored in `governance_proposals` from migration `0005_governance_proposals`; submission and
+apply intents reuse `outbox_operations`. Governance audit entries retain the exact diff, payload hash, reason,
+evidence, approval identity and reconciled outcome. No customer-facing change has an auto-apply path in this
+chunk.
+
 ### Repository layout
 
 ```text
@@ -162,6 +178,7 @@ controller/
   clients/          simulator HTTP client
   config/           runtime settings
   errors/           typed application errors
+  governance/       proposal validation, approval lifecycle, apply reconciliation
   observability/    structured logging
   runtime/          process lifecycle
   storage/          database models, async store, audit log
@@ -169,10 +186,12 @@ controller/
 migrations/         Alembic environment and versioned revisions
 tests/
   unit/             isolated controller and ingestion tests
+  unit/governance/  proposal payload and lifecycle transition tests
   unit/analytics/   fact, KPI, and cohort tests
   integration/analytics/  PostgreSQL analytics and lead/call join tests
   integration/storage/  PostgreSQL-backed persistence tests
   integration/ingestion/ PostgreSQL-backed ingestion/recovery tests
+  integration/governance/ PostgreSQL and mocked HTTP lifecycle/recovery tests
   contract/         simulator contract tests
 ```
 

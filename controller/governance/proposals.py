@@ -5,7 +5,9 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+from collections.abc import Mapping
 from dataclasses import dataclass
+from types import MappingProxyType
 from typing import Any, Protocol
 
 from controller.errors import AmbiguousPostError, SimulatorHTTPError
@@ -88,6 +90,11 @@ class ProposalPayload:
             or self.expires_in_hours <= 0
         ):
             raise ValueError("expires_in_hours must be a finite positive number")
+        object.__setattr__(self, "proposed_config", _freeze_json(self.proposed_config))
+        object.__setattr__(self, "diff", _freeze_json(self.diff))
+        object.__setattr__(self, "dry_run", _freeze_json(self.dry_run))
+        if self.evidence is not None:
+            object.__setattr__(self, "evidence", _freeze_json(self.evidence))
         # Fail at construction instead of later when persisting or hashing JSON.
         self._canonical_json()
 
@@ -97,16 +104,16 @@ class ProposalPayload:
             "proposal_id": self.proposal_id,
             "workflow_id": self.workflow_id,
             "base_version": self.base_version,
-            "proposed_config": self.proposed_config,
+            "proposed_config": _thaw_json(self.proposed_config),
             "change_summary": self.change_summary,
-            "diff": self.diff,
+            "diff": _thaw_json(self.diff),
             "affected_leads": self.affected_leads,
-            "dry_run": self.dry_run,
+            "dry_run": _thaw_json(self.dry_run),
             "impact_score": self.impact_score,
             "rationale": self.rationale,
         }
         if self.evidence is not None:
-            result["evidence"] = self.evidence
+            result["evidence"] = _thaw_json(self.evidence)
         if self.expires_in_hours is not None:
             result["expires_in_hours"] = self.expires_in_hours
         return result
@@ -129,6 +136,24 @@ class ProposalPayload:
             raise ValueError("proposal payload must contain only JSON values") from exc
 
 
+def _freeze_json(value: Any) -> Any:
+    if isinstance(value, dict):
+        return MappingProxyType(
+            {key: _freeze_json(item) for key, item in value.items()}
+        )
+    if isinstance(value, list):
+        return tuple(_freeze_json(item) for item in value)
+    return value
+
+
+def _thaw_json(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        return {key: _thaw_json(item) for key, item in value.items()}
+    if isinstance(value, tuple):
+        return [_thaw_json(item) for item in value]
+    return value
+
+
 async def submit_proposal(
     simulator: ApprovalSubmitAPI,
     store: DatabaseStore,
@@ -148,13 +173,14 @@ async def submit_proposal(
         )
 
     operation_key = f"approval-submission:{proposal.proposal_id}"
+    api_payload = proposal.to_api_payload()
     async with store.transaction() as session:
         durable = await store.create_governance_proposal(
             session,
             proposal_id=proposal.proposal_id,
             workflow_id=proposal.workflow_id,
             base_version=proposal.base_version,
-            payload=proposal.to_api_payload(),
+            payload=api_payload,
             payload_hash=proposal.payload_hash,
         )
         operation = await store.create_outbox_operation(
@@ -189,9 +215,9 @@ async def submit_proposal(
                         "proposal_id": proposal.proposal_id,
                         "payload_hash": proposal.payload_hash,
                         "base_version": proposal.base_version,
-                        "diff": proposal.diff,
+                        "diff": api_payload["diff"],
                         "rationale": proposal.rationale,
-                        "proposal_evidence": proposal.evidence or {},
+                        "proposal_evidence": api_payload.get("evidence", {}),
                     },
                 ),
             )

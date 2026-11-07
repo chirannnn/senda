@@ -57,3 +57,13 @@ def test_invalid_proposal_fields_are_rejected(field, value):
 def test_non_json_payload_values_are_rejected():
     with pytest.raises(ValueError, match="JSON values"):
         _proposal(proposed_config={"bad": object()})
+
+
+def test_payload_is_defensively_copied_and_deeply_immutable():
+    config = {"voice": {"V1": 1.0}}
+    proposal = _proposal(proposed_config=config)
+    config["voice"]["V1"] = 0.0
+
+    assert proposal.to_api_payload()["proposed_config"] == {"voice": {"V1": 1.0}}
+    with pytest.raises(TypeError):
+        proposal.proposed_config["voice"]["V1"] = 0.5
