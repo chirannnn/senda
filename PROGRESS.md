@@ -1,10 +1,10 @@
 # Progress Tracking — Outcome-First Agent Loop
 
-## Overall status: COMPLETE — CHUNK 5
+## Overall status: IN PROGRESS — CHUNK 6
 
-**Current phase:** Chunk 5 governance lifecycle
-**Current chunk:** 5 — Governance lifecycle
-**Current next action:** Chunk 5 complete; Chunk 6 has not started.
+**Current phase:** Chunk 6 statistical comparison
+**Current chunk:** 6 — Statistical comparison
+**Current next action:** Complete Chunk 6 subtask 2: observed variant evidence and deterministic experiment evaluation.
 
 ## Implementation progress
 
@@ -20,6 +20,16 @@
 | 8 | Crash recovery demonstration | NOT STARTED | — |
 | 9 | Load and observability | NOT STARTED | — |
 | 10 | Submission and final grading | NOT STARTED | — |
+
+## Chunk 6 subtask progress
+
+| Subtask | Status | Validation | Commit |
+|---|---|---|---|
+| 1. Statistical primitives | COMPLETE | 13 unit tests passed; Ruff, formatting, compileall and git diff --check passed | pending |
+| 2. Variant evidence and evaluation | NOT STARTED | — | — |
+| 3. Durable decisions and recovery | NOT STARTED | — | — |
+| 4. Governed proposal integration | NOT STARTED | — | — |
+| 5. Integration and acceptance | NOT STARTED | — | — |
 
 ## Chunk 5 subtask progress
 
