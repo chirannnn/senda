@@ -6,10 +6,16 @@ import hashlib
 import json
 import math
 from collections import defaultdict
+from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any
+from typing import Any, Protocol
 
+from controller.governance.proposals import (
+    ApprovalSubmitAPI,
+    ProposalPayload,
+    submit_proposal,
+)
 from controller.statistics.estimation import (
     ArmCounts,
     BootstrapResult,
@@ -25,6 +31,7 @@ from controller.statistics.models import (
     Kpi,
     PersonOutcome,
 )
+from controller.storage.audit import AuditEntry, AuditLog
 from controller.storage.models import KpiFact
 from controller.storage.store import (
     DatabaseStore,
@@ -33,6 +40,14 @@ from controller.storage.store import (
 
 _DIMENSIONS = {"welcome_message", "voice"}
 _PRIMARY_NAMES = {"pickup_rate": Kpi.PICKUP, "engagement_rate": Kpi.ENGAGEMENT}
+
+
+class GovernedExperimentAPI(ApprovalSubmitAPI, Protocol):
+    """Documented reads needed to recheck config before approval submission."""
+
+    async def list_workflows(self) -> list[dict[str, Any]]: ...
+
+    async def get_workflow_config(self, workflow_id: str) -> dict[str, Any]: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -447,6 +462,236 @@ class ExperimentEvaluator:
                 decision=_result_to_record(result),
             )
         return result
+
+
+async def create_governed_proposal(
+    result: ExperimentResult,
+    *,
+    simulator: GovernedExperimentAPI,
+    store: DatabaseStore,
+    audit: AuditLog,
+) -> dict[str, Any] | None:
+    """Submit an evidence-backed winner through Chunk 5 approvals only.
+
+    This function intentionally never invokes the workflow apply endpoint. The
+    approval and apply state machine remain owned by ``controller.governance``.
+    """
+    if result.decision != Decision.WINNER or result.winner is None:
+        await _audit_proposal_skip(
+            audit,
+            result,
+            "statistical decision did not establish a safe winner",
+            {"decision": result.decision.value, "reason": result.reason},
+        )
+        return None
+    selected = next(
+        (item for item in result.variants if item.challenger == result.winner), None
+    )
+    if selected is None or not selected.won or not selected.guardrail_passed:
+        await _audit_proposal_skip(
+            audit, result, "winner evidence is incomplete or unsafe", {}
+        )
+        return None
+
+    workflows = await simulator.list_workflows()
+    workflow = next(
+        (item for item in workflows if item.get("workflow_id") == result.workflow_id),
+        None,
+    )
+    config_response = await simulator.get_workflow_config(result.workflow_id)
+    version = config_response.get("version")
+    current_config = config_response.get("config")
+    stale_reason: str | None = None
+    if (
+        isinstance(version, bool)
+        or not isinstance(version, int)
+        or not isinstance(current_config, dict)
+    ):
+        stale_reason = "current workflow configuration response is malformed"
+    elif version != result.config_version:
+        stale_reason = "workflow config version changed after the experiment"
+    elif workflow is None or workflow.get("objective") != result.plan_snapshot.get(
+        "objective"
+    ):
+        stale_reason = "workflow objective or guardrail changed after the experiment"
+    options = workflow.get("options") if workflow is not None else None
+    if stale_reason is None and (
+        not isinstance(options, dict)
+        or not isinstance(options.get(result.dimension), list)
+        or result.winner not in options[result.dimension]
+    ):
+        stale_reason = "winning value is no longer an allowed workflow option"
+    if stale_reason is not None:
+        await _audit_proposal_skip(
+            audit,
+            result,
+            stale_reason,
+            {
+                "expected_config_version": result.config_version,
+                "current_config_version": version,
+            },
+        )
+        return None
+
+    cohorts = current_config.get("cohorts", [])
+    if result.cohort_id != "default" and (
+        not isinstance(cohorts, list)
+        or not any(
+            isinstance(item, dict) and item.get("id") == result.cohort_id
+            for item in cohorts
+        )
+    ):
+        await _audit_proposal_skip(
+            audit,
+            result,
+            "experiment cohort is no longer present in current config",
+            {},
+        )
+        return None
+
+    proposed_config = deepcopy(current_config)
+    allocations = proposed_config.get("allocations")
+    if not isinstance(allocations, dict):
+        await _audit_proposal_skip(
+            audit, result, "current config has no valid allocation object", {}
+        )
+        return None
+    target_id = "default" if result.cohort_id == "default" else result.cohort_id
+    target = allocations.get(target_id)
+    if target is None:
+        target = {}
+        allocations[target_id] = target
+    if not isinstance(target, dict):
+        await _audit_proposal_skip(
+            audit, result, "current cohort allocation is malformed", {}
+        )
+        return None
+    before = deepcopy(target.get(result.dimension))
+    after = {result.winner: 1.0}
+    target[result.dimension] = after
+    diff = {
+        "cohort_id": result.cohort_id,
+        "dimension": result.dimension,
+        "before": before,
+        "after": after,
+    }
+    primary_evidence = _metric_evidence(selected.primary, selected.primary_counts)
+    guardrail_evidence = _metric_evidence(selected.guardrail, selected.guardrail_counts)
+    evidence: dict[str, Any] = {
+        "experiment_id": result.experiment_id,
+        "policy_version": result.policy_version,
+        "input_hash": result.input_hash,
+        "input_snapshot": result.input_snapshot,
+        "cutoff_event_id": result.cutoff_event_id,
+        "start_at": result.start_at.isoformat(),
+        "end_at": result.end_at.isoformat(),
+        "config_version": result.config_version,
+        "cohort_id": result.cohort_id,
+        "dimension": result.dimension,
+        "winner": result.winner,
+        "excluded_crossover_people": result.excluded_crossover_people,
+        "primary_kpi": result.primary_kpi.value,
+        "primary": primary_evidence,
+        "guardrail_kpi": result.guardrail_kpi.value,
+        "guardrail": guardrail_evidence,
+        "guardrail_margin": selected.guardrail_margin,
+        "primary_adjusted_p": selected.primary_adjusted_p,
+        "guardrail_adjusted_p": selected.guardrail_adjusted_p,
+        "mde": result.plan_snapshot["mde"],
+        "method": "deterministic person-cluster percentile bootstrap; Holm correction",
+    }
+    affected_people = (
+        selected.primary_counts[result.winner].people
+        + selected.primary_counts[result.plan_snapshot["control_value"]].people
+    )
+    proposal_id = (
+        "exp-" + hashlib.sha256(result.experiment_id.encode()).hexdigest()[:32]
+    )
+    proposal = ProposalPayload(
+        proposal_id=proposal_id,
+        workflow_id=result.workflow_id,
+        base_version=result.config_version,
+        proposed_config=proposed_config,
+        change_summary=f"Promote {result.dimension} {result.winner} for {result.cohort_id}",
+        diff=diff,
+        affected_leads=affected_people,
+        dry_run={"type": "observed_experiment_comparison", **evidence},
+        impact_score=min(1.0, max(0.0, selected.primary.estimate)),
+        rationale=(
+            f"Fixed-window {result.primary_kpi.value} estimate was "
+            f"{selected.primary.estimate:.4f} (MDE {result.plan_snapshot['mde']:.4f}); "
+            f"configured {result.guardrail_kpi.value} guardrail passed. "
+            "This is an approval request; no configuration was applied."
+        ),
+        evidence=evidence,
+    )
+    response = await submit_proposal(simulator, store, audit, proposal)
+    await audit.record(
+        AuditEntry(
+            action="experiment_governance_proposal_linked",
+            actor="controller",
+            reason="Safe statistical winner submitted through the existing approval lifecycle",
+            workflow_id=result.workflow_id,
+            resource_type="experiment",
+            resource_id=result.experiment_id,
+            evidence={
+                "experiment_id": result.experiment_id,
+                "proposal_id": proposal_id,
+                "config_version": result.config_version,
+                "input_hash": result.input_hash,
+                "diff": diff,
+                "evidence": evidence,
+                "approval_status": response.get("status"),
+            },
+        )
+    )
+    return response
+
+
+async def _audit_proposal_skip(
+    audit: AuditLog,
+    result: ExperimentResult,
+    reason: str,
+    details: dict[str, object],
+) -> None:
+    await audit.record(
+        AuditEntry(
+            action="experiment_proposal_skipped",
+            actor="controller",
+            reason=reason,
+            workflow_id=result.workflow_id,
+            resource_type="experiment",
+            resource_id=result.experiment_id,
+            evidence={
+                "experiment_id": result.experiment_id,
+                "decision": result.decision.value,
+                "winner": result.winner,
+                "config_version": result.config_version,
+                "input_hash": result.input_hash,
+                "details": details,
+            },
+        )
+    )
+
+
+def _metric_evidence(
+    estimate: BootstrapResult, counts: dict[str, ArmCounts]
+) -> dict[str, object]:
+    return {
+        "estimate": estimate.estimate,
+        "lower": estimate.lower,
+        "upper": estimate.upper,
+        "replicates": estimate.replicates,
+        "arms": {
+            arm: {
+                "successes": count.successes,
+                "trials": count.trials,
+                "people": count.people,
+                "rate": count.rate,
+            }
+            for arm, count in sorted(counts.items())
+        },
+    }
 
 
 def _objective_kpis(objective: dict[str, Any]) -> tuple[Kpi, Kpi, float]:

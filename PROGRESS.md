@@ -4,7 +4,7 @@
 
 **Current phase:** Chunk 6 statistical comparison
 **Current chunk:** 6 — Statistical comparison
-**Current next action:** Complete Chunk 6 subtask 4: governed proposal integration.
+**Current next action:** Complete Chunk 6 subtask 5: end-to-end tests, policy documentation and full verification.
 
 ## Implementation progress
 
@@ -28,7 +28,7 @@
 | 1. Statistical primitives | COMPLETE | 13 unit tests passed; Ruff, formatting, compileall and git diff --check passed | 7a3d228 |
 | 2. Variant evidence and evaluation | COMPLETE | 17 focused unit tests passed; Ruff, formatting, compileall and git diff --check passed | pending |
 | 3. Durable decisions and recovery | COMPLETE | 39 focused unit/PostgreSQL integration tests passed; Alembic migration applied; Ruff, formatting, compileall and git diff --check passed | pending |
-| 4. Governed proposal integration | NOT STARTED | — | — |
+| 4. Governed proposal integration | COMPLETE | 46 focused unit/PostgreSQL governance and experiment tests passed; Ruff, formatting, compileall and git diff --check passed | pending |
 | 5. Integration and acceptance | NOT STARTED | — | — |
 
 ## Chunk 5 subtask progress
