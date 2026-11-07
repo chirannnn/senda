@@ -34,7 +34,12 @@ def definitions_from_config(
     workflow_id: str, config_version: int, config: Mapping[str, object]
 ) -> tuple[CohortDefinition, ...]:
     """Build contract-ordered definitions from an HTTP config snapshot."""
-    if not workflow_id or config_version < 0:
+    if (
+        not workflow_id
+        or isinstance(config_version, bool)
+        or not isinstance(config_version, int)
+        or config_version < 0
+    ):
         raise ValueError("workflow ID and nonnegative config version are required")
     raw = config.get("cohorts", [])
     if not isinstance(raw, list):
