@@ -93,3 +93,7 @@ def test_experiment_decisions_are_immutable_identity_scoped_snapshots():
     assert table.c.input_hash.type.length == 64
     assert table.c.workflow_id.foreign_keys
     assert {"plan_snapshot", "input_snapshot", "decision"} <= set(table.columns.keys())
+    assert any(
+        constraint.name == "uq_experiment_workflow_config_family"
+        for constraint in table.constraints
+    )

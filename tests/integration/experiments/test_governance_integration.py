@@ -7,6 +7,7 @@ import pytest
 from controller.experiments import (
     ExperimentResult,
     VariantResult,
+    _result_to_record,
     create_governed_proposal,
 )
 from controller.statistics.estimation import ArmCounts, BootstrapResult
@@ -114,12 +115,30 @@ async def _ensure_workflow(store):
         await store.ensure_workflow(session, "experiment-workflow")
 
 
+async def _persist_result(store, result):
+    async with store.transaction() as session:
+        await store.save_experiment_decision(
+            session,
+            experiment_id=result.experiment_id,
+            workflow_id=result.workflow_id,
+            config_version=result.config_version,
+            cohort_id=result.cohort_id,
+            policy_version=result.policy_version,
+            cutoff_event_id=result.cutoff_event_id,
+            input_hash=result.input_hash,
+            plan_snapshot=result.plan_snapshot,
+            input_snapshot=result.input_snapshot,
+            decision=_result_to_record(result),
+        )
+
+
 @pytest.mark.anyio
 async def test_winner_becomes_a_proposal_but_is_never_applied(postgres_store):
     await _ensure_workflow(postgres_store)
     api = ApprovalAPI()
     audit = AuditLog(postgres_store)
     result = _winner_result()
+    await _persist_result(postgres_store, result)
 
     remote = await create_governed_proposal(
         result, simulator=api, store=postgres_store, audit=audit
@@ -149,9 +168,11 @@ async def test_stale_config_creates_no_proposal_and_audits_reason(postgres_store
     await _ensure_workflow(postgres_store)
     api = ApprovalAPI(version=3)
     audit = AuditLog(postgres_store)
+    result = _winner_result()
+    await _persist_result(postgres_store, result)
 
     result = await create_governed_proposal(
-        _winner_result(), simulator=api, store=postgres_store, audit=audit
+        result, simulator=api, store=postgres_store, audit=audit
     )
 
     assert result is None

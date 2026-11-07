@@ -1,10 +1,10 @@
-# Progress Tracking — Outcome-First Agent Loop
+﻿# Progress Tracking â€” Outcome-First Agent Loop
 
-## Overall status: IN PROGRESS — CHUNK 6
+## Overall status: COMPLETE â€” CHUNK 6
 
-**Current phase:** Chunk 6 statistical comparison
-**Current chunk:** 6 — Statistical comparison
-**Current next action:** Complete Chunk 6 subtask 5: end-to-end tests, policy documentation and full verification.
+**Current phase:** Chunk 6 statistical comparison complete
+**Current chunk:** 6 â€” Statistical comparison
+**Current next action:** Chunk 7 has not started.
 
 ## Implementation progress
 
@@ -14,22 +14,30 @@
 | 2 | Durable schema and audit | COMPLETE | `aab9708`, `2443889`, `31af0ea`, `a3d7a6b`, `e88ed27` |
 | 3 | Simulator chunk ingestion | COMPLETE | `d921490`, `b6b88f6`, `6bdce40`, `f975203`, `09bf0b6`, `adf5b54` |
 | 4 | History, KPI facts, audit query | COMPLETE | `79caf3d`, `bf4e93b`, `237d6b2`, `f640e9b`, `bd1f94b`, `b87a39b` |
-| 5 | Governance lifecycle | COMPLETE | `29d7e81`, `d04a0bf`, `40aca99`, `feb3c77`, `50fbc35`, this subtask's final hardening commit |
-| 6 | Statistical comparison | IN PROGRESS | — |
-| 7 | Public incident workflow | NOT STARTED | — |
-| 8 | Crash recovery demonstration | NOT STARTED | — |
-| 9 | Load and observability | NOT STARTED | — |
-| 10 | Submission and final grading | NOT STARTED | — |
+| 5 | Governance lifecycle | COMPLETE | `29d7e81`, `d04a0bf`, `40aca99`, `feb3c77`, `50fbc35`, `df4d945` |
+| 6 | Statistical comparison | COMPLETE | `7a3d228`, `eef6137`, `ecb6d92`, `dba33bf`, this completion commit |
+| 7 | Public incident workflow | NOT STARTED | â€” |
+| 8 | Crash recovery demonstration | NOT STARTED | â€” |
+| 9 | Load and observability | NOT STARTED | â€” |
+| 10 | Submission and final grading | NOT STARTED | â€” |
 
 ## Chunk 6 subtask progress
 
 | Subtask | Status | Validation | Commit |
 |---|---|---|---|
-| 1. Statistical primitives | COMPLETE | 13 unit tests passed; Ruff, formatting, compileall and git diff --check passed | 7a3d228 |
-| 2. Variant evidence and evaluation | COMPLETE | 17 focused unit tests passed; Ruff, formatting, compileall and git diff --check passed | pending |
-| 3. Durable decisions and recovery | COMPLETE | 39 focused unit/PostgreSQL integration tests passed; Alembic migration applied; Ruff, formatting, compileall and git diff --check passed | pending |
-| 4. Governed proposal integration | COMPLETE | 46 focused unit/PostgreSQL governance and experiment tests passed; Ruff, formatting, compileall and git diff --check passed | pending |
-| 5. Integration and acceptance | NOT STARTED | — | — |
+| 1. Statistical primitives | COMPLETE | 13 focused unit tests passed; Ruff, formatting, compileall and diff check passed | `7a3d228` |
+| 2. Variant evidence and evaluation | COMPLETE | 17 focused unit tests passed; Ruff, formatting, compileall and `git diff --check` passed | `eef6137` |
+| 3. Durable decisions and recovery | COMPLETE | 39 focused unit/PostgreSQL integration tests passed; migration `0006` applied; Ruff, formatting, compileall and `git diff --check` passed | `ecb6d92` |
+| 4. Governed proposal integration | COMPLETE | 46 focused PostgreSQL governance/experiment tests passed; Ruff, formatting, compileall and `git diff --check` passed | `dba33bf` |
+| 5. Integration and acceptance | COMPLETE | Full suite: 222 passed on isolated PostgreSQL 18; Ruff, format, compileall, Alembic check and diff check passed; public_01_dev finished and grader ran | this completion commit |
+
+## Chunk 6 validation and limitations
+
+- Isolated PostgreSQL 18 integration database applied migrations through `0007_experiment_family_lock`; Alembic reported no schema drift.
+- Final checks: `pytest -q`: 222 passed; `ruff check .`, `ruff format --check .`, `python -m compileall -q controller tests`, Alembic check and `git diff --check` passed.
+- `public_01_dev` completed through HTTP ingestion: simulator finished at 11,520 simulated minutes with 297,024 events; grader output was written under the OS temporary directory. It reported zero applied changes and 0.0% KPI delta versus baseline because runtime does not schedule statistical plans.
+- Chunk 6 decision and proposal components are callable but not wired to runtime scheduling. A caller must supply an explicit plan (baselines, allocations, clustering, power, imbalance tolerance, fixed window/cutoff). Missing inputs or workflow guardrails produce no decision/proposal. Simulator per-dial assignment cannot guarantee one arm per person; cross-arm people are excluded and the limitation is documented in `docs/DECISION_POLICY.md`.
+- Chunk 7 remains NOT STARTED.
 
 ## Chunk 5 subtask progress
 
@@ -52,7 +60,7 @@ Subtask 4 adds bounded approval polling with per-read timeouts and an event reco
 
 Subtask 5 adds a single-attempt apply client call and the approved-proposal apply path. It rereads approval identity/status and current workflow version, marks stale proposals without sending a POST, then atomically persists apply intent, applying status, and audit evidence before posting the approval ID. It confirms application from matching config-history proposal ID, approval ID, actor, and version, along with the current config version. If an ambiguous response cannot be resolved, it stops in `reconciliation_required`; it never retries apply because the simulator contract does not document lost-response idempotency. PostgreSQL/mock-HTTP cases cover successful apply, stale version, lost response after remote application, unresolved apply, duplicate invocation, and restart with an existing intent. The focused suite passed 67 tests.
 
-Subtask 6 adds end-to-end pending → approved → applied coverage, including a store reopen after the approval decision and before apply; checks exact diff, actor, reason, and outcome in audit evidence; covers restart before apply and after remote apply; and hardens proposal values against mutation after hashing. README and this file now describe the implemented boundary. Final verification on the isolated PostgreSQL 18 test cluster: `pytest -q` — 189 passed; `ruff check .` — passed; `ruff format --check .` — 76 files already formatted; `python -m compileall -q controller tests` — passed; `git diff --check` — passed; Alembic `check` — no new operations; head is `0005_governance_proposals`. The first full-suite run exposed the old expected Alembic revision in a restart test; it was updated from `0004` to `0005` and the full suite then passed. No public scenario or live assessment simulator was run, and no simulator source was modified.
+Subtask 6 adds end-to-end pending â†’ approved â†’ applied coverage, including a store reopen after the approval decision and before apply; checks exact diff, actor, reason, and outcome in audit evidence; covers restart before apply and after remote apply; and hardens proposal values against mutation after hashing. README and this file now describe the implemented boundary. Final verification on the isolated PostgreSQL 18 test cluster: `pytest -q` â€” 189 passed; `ruff check .` â€” passed; `ruff format --check .` â€” 76 files already formatted; `python -m compileall -q controller tests` â€” passed; `git diff --check` â€” passed; Alembic `check` â€” no new operations; head is `0005_governance_proposals`. The first full-suite run exposed the old expected Alembic revision in a restart test; it was updated from `0004` to `0005` and the full suite then passed. No public scenario or live assessment simulator was run, and no simulator source was modified.
 
 Chunk 5 code is not yet wired to an autonomous proposal generator or the runtime loop; it is callable governance lifecycle functionality. Decision generation remains later work. Actual OpenAPI has only generic object schemas for these routes, so response validation uses documented examples and observed route-handler fields. Ambiguous apply remains manual-review-only because the simulator does not document safe retry semantics. No real OS process-kill demonstration was performed in this chunk.
 
@@ -60,7 +68,7 @@ Chunk 5 code is not yet wired to an autonomous proposal generator or the runtime
 
 | Subtask | Status | Validation | Commit |
 |---|---|---|---|
-| 1. Historical query foundation | COMPLETE | `pytest -q tests/integration/storage/test_history_queries.py` — 2 passed; Ruff check/format and `git diff --check` passed | `79caf3d` |
+| 1. Historical query foundation | COMPLETE | `pytest -q tests/integration/storage/test_history_queries.py` â€” 2 passed; Ruff check/format and `git diff --check` passed | `79caf3d` |
 | 2. KPI fact derivation | COMPLETE | analytics unit: 8 passed; analytics PostgreSQL integration: 2 passed; history/storage/schema tests: 18 passed; Alembic upgrade/check and Ruff passed | `bf4e93b` |
 | 3. KPI calculations and cohorts | COMPLETE | analytics unit: 16 passed; analytics PostgreSQL integration: 3 passed; history/storage/schema tests: 19 passed; Alembic and Ruff passed | `237d6b2` |
 | 4. Read-only audit queries | COMPLETE | audit unit: 3 passed; PostgreSQL query integration: 1 passed; storage regression suite: 11 passed; Alembic check and Ruff passed | `f640e9b` |
@@ -74,21 +82,21 @@ Subtask 3 adds migration `0003_cohort_definitions`, with immutable rules keyed b
 
 Subtask 4 adds bounded, read-only audit filtering by workflow, time, actor, action, config version, approval ID, outcome, and resource, with deterministic `(occurred_at, UUID)` keyset continuation and page sizes capped at 500. Migration `0004_audit_query_indexes` replaces the less useful workflow/time index with ordered workflow/time, workflow/actor/time, and workflow/action/time indexes; the prior migration history remains intact. PostgreSQL verified tied timestamp ordering across pages, exact evidence filters, and unchanged row count. Actor and outcome are read from the controller's own audit fields/evidence; query results do not mutate audit history.
 
-Subtask 5 completes the persisted-event → fact → lead/call context → KPI → cohort-scoped audit path. Lead/call context joins only the latest lead record preceding a call, reports a missing join explicitly, and detects returning people only when an earlier lead record for that person precedes the current lead. Historical attribution reconstructs the cohort from that lead's stored features and compares it to observed call exposure. The same `CohortDefinition` is accepted by KPI calculation and the cohort-scoped audit adapter. Runtime invokes fact derivation after startup/reconciliation and each successfully ingested advance. PostgreSQL restart/replay tests show a fresh store reads committed facts and a repeat derives zero duplicates; injected FK failure leaves the scan cursor at 0. The final full suite and code/schema checks passed.
+Subtask 5 completes the persisted-event â†’ fact â†’ lead/call context â†’ KPI â†’ cohort-scoped audit path. Lead/call context joins only the latest lead record preceding a call, reports a missing join explicitly, and detects returning people only when an earlier lead record for that person precedes the current lead. Historical attribution reconstructs the cohort from that lead's stored features and compares it to observed call exposure. The same `CohortDefinition` is accepted by KPI calculation and the cohort-scoped audit adapter. Runtime invokes fact derivation after startup/reconciliation and each successfully ingested advance. PostgreSQL restart/replay tests show a fresh store reads committed facts and a repeat derives zero duplicates; injected FK failure leaves the scan cursor at 0. The final full suite and code/schema checks passed.
 
 Synthetic PostgreSQL 18 analytics measurement on the Windows development host: 5,000 call events scanned and 5,000 facts inserted in bounded pages of 250; cursor advanced to event ID `990004999`; measured processing rate 557 events/s; peak traced Python memory 3.94 MiB; one filtered SQL aggregate took 10.3 ms and returned 5,000 dials, 2,500 connected and 1,250 concluded. This is a synthetic local observation, not a public load-scenario or grading-host result. No public scenario was run. Automatic collection of historic cohort predicates from config-history responses remains unverified; the canonical representation accepts a permitted config snapshot, but runtime does not guess undocumented response fields.
 
-Final Chunk 4 checks: `pytest -q tests/unit/analytics/` — 17 passed; `pytest -q tests/integration/analytics/` — 5 passed; `pytest -q` — 123 passed in 46.61s; `ruff check .` passed; `ruff format --check .` reported 65 files already formatted; `python -m compileall -q controller tests` passed; Alembic `upgrade head` repeated and `check` reported no new operations; `git diff --check` passed. PostgreSQL tests used a temporary PostgreSQL 18 cluster and a disposable database under system temporary storage; Docker/Compose and the assessment simulator were not run.
+Final Chunk 4 checks: `pytest -q tests/unit/analytics/` â€” 17 passed; `pytest -q tests/integration/analytics/` â€” 5 passed; `pytest -q` â€” 123 passed in 46.61s; `ruff check .` passed; `ruff format --check .` reported 65 files already formatted; `python -m compileall -q controller tests` passed; Alembic `upgrade head` repeated and `check` reported no new operations; `git diff --check` passed. PostgreSQL tests used a temporary PostgreSQL 18 cluster and a disposable database under system temporary storage; Docker/Compose and the assessment simulator were not run.
 
 ## Chunk 3 subtask progress
 
 | Subtask | Status | Validation | Commit |
 |---|---|---|---|
-| 1. Ingestion foundation | COMPLETE | `.venv/Scripts/python.exe -m pytest -q tests/unit/ingestion/` — 13 passed; Ruff check/format and `git diff --check` passed | `d921490` |
-| 2. Historical ingestion | COMPLETE | `.venv/Scripts/python.exe -m pytest -q tests/unit/ingestion/ tests/unit/test_simulator_client.py` — 25 passed; Ruff check/format and `git diff --check` passed | `b6b88f6` |
-| 3. Transactional persistence | COMPLETE | PostgreSQL integration plus storage regression tests — 14 passed; Ruff check/format and `git diff --check` passed | `6bdce40` |
-| 4. Live ingestion | COMPLETE | Focused unit/runtime and PostgreSQL storage/ingestion checks — 40 passed; one live POST persisted two events through checkpoint 7 and completed its outbox intent; Ruff and format passed | `f975203` |
-| 5. Crash recovery | COMPLETE | Focused parser/runtime and PostgreSQL recovery suite — 29 passed; timeout-after-apply recovered without another POST; unchanged state plus empty listing allowed one persisted retry; API outage made no retry | `09bf0b6` |
+| 1. Ingestion foundation | COMPLETE | `.venv/Scripts/python.exe -m pytest -q tests/unit/ingestion/` â€” 13 passed; Ruff check/format and `git diff --check` passed | `d921490` |
+| 2. Historical ingestion | COMPLETE | `.venv/Scripts/python.exe -m pytest -q tests/unit/ingestion/ tests/unit/test_simulator_client.py` â€” 25 passed; Ruff check/format and `git diff --check` passed | `b6b88f6` |
+| 3. Transactional persistence | COMPLETE | PostgreSQL integration plus storage regression tests â€” 14 passed; Ruff check/format and `git diff --check` passed | `6bdce40` |
+| 4. Live ingestion | COMPLETE | Focused unit/runtime and PostgreSQL storage/ingestion checks â€” 40 passed; one live POST persisted two events through checkpoint 7 and completed its outbox intent; Ruff and format passed | `f975203` |
+| 5. Crash recovery | COMPLETE | Focused parser/runtime and PostgreSQL recovery suite â€” 29 passed; timeout-after-apply recovered without another POST; unchanged state plus empty listing allowed one persisted retry; API outage made no retry | `09bf0b6` |
 | 6. Hardening | COMPLETE | 19 ingestion unit tests; 11 ingestion integration tests; full suite 93 passed; Ruff, format, compile, Alembic and diff checks passed | `adf5b54` |
 
 ## Environment setup results (2026-11-06)
@@ -100,13 +108,13 @@ Final Chunk 4 checks: `pytest -q tests/unit/analytics/` — 17 passed; `pytest -
 - Generated development-only credentials are stored outside the repository at `%LOCALAPPDATA%\FormiAgenticUniverse\postgres-dev.env`; credential values were not displayed. Compose config validation passed.
 - Container became healthy. Async SQLAlchemy connection succeeded against PostgreSQL **18.6**. A temporary row was written, the container was restarted, and the row was read back successfully. Temporary probe table was then removed. Volume mount inspected and confirmed.
 - `requirements.txt` now includes `SQLAlchemy[asyncio]`, Alembic and asyncpg so the selected database driver/async support is reproducible. No assessment database connection was specified in the assignment materials or configured in the inspected environment.
-- Chunks 1–3 are complete. Chunk 4 history, KPI facts and audit queries are complete. Chunk 5 has not started.
+- Chunks 1â€“3 are complete. Chunk 4 history, KPI facts and audit queries are complete. Chunk 5 has not started.
 
 ## Chunk 1 subtask progress
 
 | Subtask | Status | Validation | Commit |
 |---|---|---|---|
-| 1. Package foundation, typed errors and JSON logging | COMPLETE | `python -m pytest -q tests/unit/test_logging.py` — 2 passed; `compileall` passed | `e547b63 feat(runtime): add package foundation and safe JSON logging` |
+| 1. Package foundation, typed errors and JSON logging | COMPLETE | `python -m pytest -q tests/unit/test_logging.py` â€” 2 passed; `compileall` passed | `e547b63 feat(runtime): add package foundation and safe JSON logging` |
 | 2. Typed configuration and validation | COMPLETE | 20 unit tests passed; Ruff check/format passed; `compileall` passed | `196a9ec feat(config): add validated runtime settings` |
 | 3. Async simulator HTTP client | COMPLETE | 28 unit tests passed; Ruff check/format passed; `compileall` passed | `cfc28d2 feat(http): add bounded async simulator client` |
 | 4. Runtime bootstrap, advance loop and graceful stop | COMPLETE | 5 runtime unit tests passed; Ruff check/format passed; `compileall` passed | `730cf26 feat(runtime): add readiness and graceful advance loop` |
@@ -149,12 +157,12 @@ Subtask 4 starts the simulator through documented readiness/state/workflow reads
 
 | Scenario/check | Result | Evidence |
 |---|---|---|
-| public_01_dev | NOT RUN | — |
-| public_02_incidents | NOT RUN | — |
-| public_03_load | NOT RUN | — |
-| Crash recovery | NOT RUN | — |
+| public_01_dev | NOT RUN | â€” |
+| public_02_incidents | NOT RUN | â€” |
+| public_03_load | NOT RUN | â€” |
+| Crash recovery | NOT RUN | â€” |
 
-Chunk 2 verification used `CONTROLLER_TEST_DATABASE_URL` for an isolated PostgreSQL 18 test database outside the repository. `python -m pytest -q tests/integration/storage/test_store.py` — **11 passed**. `python -m pytest -q` — **63 passed** with PostgreSQL integration tests enabled. `ruff check controller tests/integration tests/unit migrations`, `ruff format --check controller tests/integration tests/unit migrations`, `python -m compileall -q controller tests migrations`, `alembic check`, and `git diff --check` passed. No assessment scenario was run.
+Chunk 2 verification used `CONTROLLER_TEST_DATABASE_URL` for an isolated PostgreSQL 18 test database outside the repository. `python -m pytest -q tests/integration/storage/test_store.py` â€” **11 passed**. `python -m pytest -q` â€” **63 passed** with PostgreSQL integration tests enabled. `ruff check controller tests/integration tests/unit migrations`, `ruff format --check controller tests/integration tests/unit migrations`, `python -m compileall -q controller tests migrations`, `alembic check`, and `git diff --check` passed. No assessment scenario was run.
 
 Chunk 1 runtime and launcher tests use fakes/HTTPX mock transport and do not require the assessment simulator or Docker. No full assessment scenario, load run, crash-recovery demonstration, or type checker run has been performed. Ruff initially found a pre-existing import-order issue in the simulator contract test; it was corrected as an import-only cleanup while moving that test to `tests/contract/`. Ruff check and formatting now cover `controller`, `tests`, and `migrations`.
 
@@ -166,7 +174,7 @@ No assessment scenario or full end-to-end run has been performed yet. Chunk 1 un
 - Separated database-backed persistence tests into `tests/integration/storage/`; kept schema/config checks in `tests/unit/`; moved the existing simulator test suite to `tests/contract/` without changing test behavior.
 - Kept root-level `alembic.ini` and the conventional `migrations/` directory; updated migration metadata imports and the store's lookup of the root Alembic config.
 - Added the current tree to README. No Chunk 3 code has started.
-- Verification after the refactor: `.venv/Scripts/python.exe -m pytest -q` — 63 passed; `ruff check controller tests migrations` — passed; `ruff format --check controller tests migrations` — passed; `python -m compileall -q controller tests migrations` — passed; `alembic -c alembic.ini check` against the isolated PostgreSQL 18 test database — no new upgrade operations detected; `git diff --check` — passed. No schema or migration revision changed.
+- Verification after the refactor: `.venv/Scripts/python.exe -m pytest -q` â€” 63 passed; `ruff check controller tests migrations` â€” passed; `ruff format --check controller tests migrations` â€” passed; `python -m compileall -q controller tests migrations` â€” passed; `alembic -c alembic.ini check` against the isolated PostgreSQL 18 test database â€” no new upgrade operations detected; `git diff --check` â€” passed. No schema or migration revision changed.
 - One focused refactor commit is created after verification; no push was made.
 
 ## Approved and unapproved decisions
@@ -194,7 +202,7 @@ No assessment scenario or full end-to-end run has been performed yet. Chunk 1 un
 
 - Whether an assessment database connection will be supplied at grading; Docker availability and a durable DB path in that environment; grader Python patch; dependency lock/pins.
 - Chunk retention/size bounds, exact response/error fields beyond docs, remote apply behavior after lost response.
-- Runtime throughput, memory, DB growth, 10× bottleneck and failure behavior on the grading host.
+- Runtime throughput, memory, DB growth, 10Ã— bottleneck and failure behavior on the grading host.
 - Statistical power/false-positive calibration within scenario duration.
 - No documented supervisor notification endpoint or direct rollback API; use controller audit/report and governed corrective proposal unless live contract proves otherwise.
 
@@ -220,7 +228,7 @@ Do not rewrite prior history.
 
 ## Next action
 
-Chunk 4 is complete. Next: Chunk 5 — Governance lifecycle. It has not started; wait for review/approval before beginning.
+Chunk 4 is complete. Next: Chunk 5 â€” Governance lifecycle. It has not started; wait for review/approval before beginning.
 
 ### Chunk 3 measured evidence (synthetic HTTP stream, PostgreSQL 18)
 
@@ -229,7 +237,7 @@ Chunk 4 is complete. Next: Chunk 5 — Governance lifecycle. It has not started;
 - Live-advance integration issued one POST, persisted its intent and returned descriptor, stored two events, and reached checkpoint 7. Timeout-after-apply restart recovered two events at checkpoint 12 without a second POST. A separate no-progress case retried the same intent after matching pre/post state and an empty listing; its attempt count was 2 and it completed at checkpoint 5. Reconciliation GET outage left the intent in progress and made no additional POST.
 - Synthetic streamed PostgreSQL integration ingested 30,000 generated events in batches of 500 at **1,601 events/s** with **2.54 MiB peak traced Python memory** on this Windows development host. This is a local synthetic measurement, not a simulator load-scenario result or grading-host claim.
 - Runtime integration bootstrapped two history events before one live advance, persisted two live events, and completed at checkpoint 4. Restart recovery used fresh client/store instances over the same PostgreSQL data; no OS-level kill/restart demonstration was run in this chunk.
-- Final checks: `.venv/Scripts/python.exe -m pytest -q tests/unit/ingestion/` — **19 passed**; `.venv/Scripts/python.exe -m pytest -q tests/integration/ingestion/` — **11 passed**; `.venv/Scripts/python.exe -m pytest -q` — **93 passed**; `ruff check .` passed; `ruff format --check .` reported 47 files already formatted; `.venv/Scripts/python.exe -m compileall -q controller tests` passed; Alembic `upgrade head` repeated and `check` reported no new operations; `git diff --check` passed. Ruff excludes only assignment-provided `sim/` and deliberately naive `examples/naive_controller.py`; neither was modified.
+- Final checks: `.venv/Scripts/python.exe -m pytest -q tests/unit/ingestion/` â€” **19 passed**; `.venv/Scripts/python.exe -m pytest -q tests/integration/ingestion/` â€” **11 passed**; `.venv/Scripts/python.exe -m pytest -q` â€” **93 passed**; `ruff check .` passed; `ruff format --check .` reported 47 files already formatted; `.venv/Scripts/python.exe -m compileall -q controller tests` passed; Alembic `upgrade head` repeated and `check` reported no new operations; `git diff --check` passed. Ruff excludes only assignment-provided `sim/` and deliberately naive `examples/naive_controller.py`; neither was modified.
 - No schema migration was needed. Public scenarios remain NOT RUN; no scenario YAML or run-directory data was used by controller decisions.
 
 Known limits: these are synthetic development-host measurements, not `public_03_load` or grading-host results. The 1 MiB memory spool spills larger chunks to temporary disk without a hard total-byte cap, so deployments need sufficient temp capacity. Event IDs and the checkpoint are scoped to one simulator world per database; use a fresh database for independent simulator worlds until multi-run namespacing is designed.

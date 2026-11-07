@@ -18,6 +18,7 @@ from controller.governance.proposals import (
 )
 from controller.statistics.estimation import (
     ArmCounts,
+    BootstrapInsufficientDataError,
     BootstrapResult,
     arm_counts,
     estimate_rate_difference,
@@ -78,7 +79,32 @@ class ExperimentPlan:
     policy_version: str = STATISTICS_POLICY_VERSION
 
     def __post_init__(self) -> None:
-        if not all((self.experiment_id, self.workflow_id, self.cohort_id)):
+        if any(
+            not isinstance(value, str) or not value.strip()
+            for value in (
+                self.experiment_id,
+                self.workflow_id,
+                self.cohort_id,
+                self.policy_version,
+                self.control_value,
+                self.dimension,
+            )
+        ):
+            raise ValueError(
+                "experiment identity and arm values must be non-empty strings"
+            )
+        if (
+            not isinstance(self.challengers, tuple)
+            or not self.challengers
+            or any(
+                not isinstance(value, str) or not value.strip()
+                for value in self.challengers
+            )
+        ):
+            raise ValueError("challengers must be a non-empty tuple of variant strings")
+        if not all(
+            (self.experiment_id, self.workflow_id, self.cohort_id, self.policy_version)
+        ):
             raise ValueError("experiment, workflow and cohort IDs are required")
         if self.dimension not in _DIMENSIONS:
             raise ValueError("only welcome_message or voice can be tested")
@@ -89,16 +115,24 @@ class ExperimentPlan:
             or self.control_value in self.challengers
         ):
             raise ValueError("experiment arm values must be unique")
+        if len(self.challengers) > 3:
+            raise ValueError(
+                "at most three challengers may share one comparison family"
+            )
         if (
             isinstance(self.config_version, bool)
+            or not isinstance(self.config_version, int)
             or self.config_version < 0
             or isinstance(self.cutoff_event_id, bool)
+            or not isinstance(self.cutoff_event_id, int)
             or self.cutoff_event_id < 0
         ):
             raise ValueError("config version and event cutoff must be nonnegative")
         if (
-            self.start_at.tzinfo is None
-            or self.end_at.tzinfo is None
+            not isinstance(self.start_at, datetime)
+            or not isinstance(self.end_at, datetime)
+            or self.start_at.utcoffset() is None
+            or self.end_at.utcoffset() is None
             or self.end_at <= self.start_at
         ):
             raise ValueError(
@@ -117,14 +151,20 @@ class ExperimentPlan:
             )
         probabilities = tuple(self.allocation_probabilities.values())
         if any(
-            not math.isfinite(value) or value <= 0 or value > 1
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(value)
+            or value <= 0
+            or value > 1
             for value in probabilities
         ):
             raise ValueError("allocation probabilities must be finite and in (0, 1]")
         if not math.isclose(sum(probabilities), 1.0, rel_tol=0, abs_tol=1e-6):
             raise ValueError("declared arm allocation probabilities must sum to one")
         if (
-            not math.isfinite(self.imbalance_tolerance)
+            isinstance(self.imbalance_tolerance, bool)
+            or not isinstance(self.imbalance_tolerance, (int, float))
+            or not math.isfinite(self.imbalance_tolerance)
             or not 0 <= self.imbalance_tolerance < 1
         ):
             raise ValueError(
@@ -136,17 +176,38 @@ class ExperimentPlan:
         if self.mde > 1:
             raise ValueError("MDE must not exceed one")
         if (
-            not math.isfinite(self.intracluster_correlation)
+            isinstance(self.intracluster_correlation, bool)
+            or not isinstance(self.intracluster_correlation, (int, float))
+            or not math.isfinite(self.intracluster_correlation)
             or not 0 <= self.intracluster_correlation <= 1
         ):
             raise ValueError("intracluster correlation must be in [0,1]")
-        if not math.isfinite(self.mean_cluster_size) or self.mean_cluster_size < 1:
+        if (
+            isinstance(self.mean_cluster_size, bool)
+            or not isinstance(self.mean_cluster_size, (int, float))
+            or not math.isfinite(self.mean_cluster_size)
+            or self.mean_cluster_size < 1
+        ):
             raise ValueError("mean cluster size must be at least one")
-        if not math.isfinite(self.power) or not 0 < self.power < 1:
+        if (
+            isinstance(self.power, bool)
+            or not isinstance(self.power, (int, float))
+            or not math.isfinite(self.power)
+            or not 0 < self.power < 1
+        ):
             raise ValueError("a planned power in (0,1) is required")
-        if not math.isfinite(self.alpha) or not 0 < self.alpha < 1:
+        if (
+            isinstance(self.alpha, bool)
+            or not isinstance(self.alpha, (int, float))
+            or not math.isfinite(self.alpha)
+            or not 0 < self.alpha < 1
+        ):
             raise ValueError("alpha must be in (0,1)")
-        if self.bootstrap_replicates < 100:
+        if (
+            isinstance(self.bootstrap_replicates, bool)
+            or not isinstance(self.bootstrap_replicates, int)
+            or self.bootstrap_replicates < 100
+        ):
             raise ValueError("at least 100 bootstrap replicates are required")
         _objective_kpis(self.objective)
 
@@ -156,8 +217,8 @@ class VariantResult:
     """Independent KPI evidence for one challenger against the control."""
 
     challenger: str
-    primary: BootstrapResult
-    guardrail: BootstrapResult
+    primary: BootstrapResult | None
+    guardrail: BootstrapResult | None
     primary_counts: dict[str, ArmCounts]
     guardrail_counts: dict[str, ArmCounts]
     required_primary_trials: tuple[int, int]
@@ -169,6 +230,7 @@ class VariantResult:
     sufficient: bool
     guardrail_passed: bool
     won: bool
+    evidence_error: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -199,13 +261,24 @@ class ExperimentResult:
 class ExperimentEvaluator:
     """Query valid persisted call facts and make one deterministic final decision."""
 
-    def __init__(self, store: DatabaseStore, *, page_size: int = 1000) -> None:
+    def __init__(
+        self,
+        store: DatabaseStore,
+        *,
+        page_size: int = 1000,
+        audit: AuditLog | None = None,
+    ) -> None:
         if page_size < 1:
             raise ValueError("page size must be positive")
         self._store = store
         self._page_size = page_size
+        self._audit = audit or AuditLog(store)
 
     async def evaluate(self, plan: ExperimentPlan) -> ExperimentResult:
+        """Persist and return the one terminal comparison for this config family."""
+        return await self.evaluate_and_persist(plan)
+
+    async def _evaluate_snapshot(self, plan: ExperimentPlan) -> ExperimentResult:
         """Evaluate exactly the predeclared time window and event-ID cutoff.
 
         This is a terminal analysis for the supplied cutoff, not an interim look.
@@ -294,26 +367,36 @@ class ExperimentEvaluator:
                 >= 2
             )
             if sufficient:
-                seed_key = f"{plan.experiment_id}:{plan.cutoff_event_id}:{plan.dimension}:{challenger}"
-                primary = estimate_rate_difference(
-                    primary_rows,
-                    control_arm=plan.control_value,
-                    treatment_arm=challenger,
-                    seed_key=seed_key + ":" + primary_kpi.value,
-                    replicates=plan.bootstrap_replicates,
-                    alpha=plan.alpha / (2 * len(plan.challengers)),
+                seed_key = (
+                    f"{plan.policy_version}:{plan.experiment_id}:"
+                    f"{plan.cutoff_event_id}:{plan.dimension}:{challenger}"
                 )
-                guardrail = estimate_rate_difference(
-                    guardrail_rows,
-                    control_arm=plan.control_value,
-                    treatment_arm=challenger,
-                    seed_key=seed_key + ":" + guardrail_kpi.value,
-                    replicates=plan.bootstrap_replicates,
-                    alpha=plan.alpha / (2 * len(plan.challengers)),
-                    evidence_threshold=-margin,
-                )
+                try:
+                    primary = estimate_rate_difference(
+                        primary_rows,
+                        control_arm=plan.control_value,
+                        treatment_arm=challenger,
+                        seed_key=seed_key + ":" + primary_kpi.value,
+                        replicates=plan.bootstrap_replicates,
+                        alpha=plan.alpha / len(plan.challengers),
+                    )
+                    guardrail = estimate_rate_difference(
+                        guardrail_rows,
+                        control_arm=plan.control_value,
+                        treatment_arm=challenger,
+                        seed_key=seed_key + ":" + guardrail_kpi.value,
+                        replicates=plan.bootstrap_replicates,
+                        alpha=plan.alpha / len(plan.challengers),
+                        evidence_threshold=-margin,
+                    )
+                    bootstrap_error = None
+                except BootstrapInsufficientDataError as exc:
+                    primary = guardrail = None
+                    sufficient = False
+                    bootstrap_error = str(exc)
             else:
                 primary = guardrail = None
+                bootstrap_error = None
             raw.append(
                 {
                     "challenger": challenger,
@@ -326,21 +409,28 @@ class ExperimentEvaluator:
                     "balanced": balanced,
                     "sufficient": sufficient,
                     "margin": margin,
+                    "evidence_error": bootstrap_error,
                 }
             )
 
         primary_adjusted = holm_adjust(
             {
-                item["challenger"]: item["primary"].p_not_greater_than_threshold
+                item["challenger"]: (
+                    item["primary"].p_not_greater_than_threshold
+                    if item["primary"] is not None
+                    else 1.0
+                )
                 for item in raw
-                if item["primary"] is not None
             }
         )
         guardrail_adjusted = holm_adjust(
             {
-                item["challenger"]: item["guardrail"].p_not_greater_than_threshold
+                item["challenger"]: (
+                    item["guardrail"].p_not_greater_than_threshold
+                    if item["guardrail"] is not None
+                    else 1.0
+                )
                 for item in raw
-                if item["guardrail"] is not None
             }
         )
         results = tuple(
@@ -369,6 +459,7 @@ class ExperimentEvaluator:
                     and item["guardrail"].lower > -item["margin"]
                     and guardrail_adjusted.get(item["challenger"], 1.0) <= plan.alpha
                 ),
+                evidence_error=item["evidence_error"],
             )
             for item in raw
         )
@@ -389,10 +480,15 @@ class ExperimentEvaluator:
                 "primary evidence passed Holm correction and configured guardrail non-inferiority",
             )
         elif not results or not any(item.sufficient for item in results):
+            bootstrap_errors = [
+                item.evidence_error for item in results if item.evidence_error
+            ]
+            detail = f"; {bootstrap_errors[0]}" if bootstrap_errors else ""
             decision, winner, reason = (
                 Decision.INSUFFICIENT_EVIDENCE,
                 None,
-                "no challenger met predeclared evidence, balance and sample-size requirements",
+                "no challenger met predeclared evidence, balance and sample-size requirements"
+                + detail,
             )
         elif any(
             item.won is False
@@ -446,9 +542,16 @@ class ExperimentEvaluator:
                     "experiment ID already belongs to a different plan"
                 )
             return _result_from_record(existing)
-        result = await self.evaluate(plan)
+        family = await self._store.get_experiment_decision_for_config(
+            plan.workflow_id, plan.config_version
+        )
+        if family is not None:
+            raise ExperimentDecisionConflictError(
+                "this workflow config version already has a terminal experiment decision"
+            )
+        result = await self._evaluate_snapshot(plan)
         async with self._store.transaction() as session:
-            await self._store.save_experiment_decision(
+            _stored, inserted = await self._store.save_experiment_decision(
                 session,
                 experiment_id=result.experiment_id,
                 workflow_id=result.workflow_id,
@@ -461,6 +564,28 @@ class ExperimentEvaluator:
                 input_snapshot=result.input_snapshot,
                 decision=_result_to_record(result),
             )
+            if inserted:
+                await self._audit.append(
+                    session,
+                    AuditEntry(
+                        action="experiment_decided",
+                        actor="controller",
+                        reason=result.reason,
+                        workflow_id=result.workflow_id,
+                        resource_type="experiment",
+                        resource_id=result.experiment_id,
+                        evidence={
+                            "decision": _result_to_record(result),
+                            "policy_version": result.policy_version,
+                            "config_version": result.config_version,
+                            "cohort_id": result.cohort_id,
+                            "input_hash": result.input_hash,
+                            "plan_snapshot": result.plan_snapshot,
+                            "input_snapshot": result.input_snapshot,
+                            "cutoff_event_id": result.cutoff_event_id,
+                        },
+                    ),
+                )
         return result
 
 
@@ -482,6 +607,20 @@ async def create_governed_proposal(
             result,
             "statistical decision did not establish a safe winner",
             {"decision": result.decision.value, "reason": result.reason},
+        )
+        return None
+    durable = await store.get_experiment_decision(result.experiment_id)
+    if (
+        durable is None
+        or durable.input_hash != result.input_hash
+        or durable.plan_snapshot != result.plan_snapshot
+        or durable.decision != _result_to_record(result)
+    ):
+        await _audit_proposal_skip(
+            audit,
+            result,
+            "only the exact durable experiment decision may create a proposal",
+            {"durable_decision_found": durable is not None},
         )
         return None
     selected = next(
@@ -696,7 +835,7 @@ def _metric_evidence(
 
 def _objective_kpis(objective: dict[str, Any]) -> tuple[Kpi, Kpi, float]:
     primary_name = objective.get("primary")
-    if primary_name not in _PRIMARY_NAMES:
+    if not isinstance(primary_name, str) or primary_name not in _PRIMARY_NAMES:
         raise ValueError("workflow primary KPI must be pickup_rate or engagement_rate")
     primary = _PRIMARY_NAMES[primary_name]
     guardrail = objective.get("guardrail")
@@ -890,7 +1029,9 @@ def _result_to_record(result: ExperimentResult) -> dict[str, object]:
             for arm, count in sorted(values.items())
         }
 
-    def bootstrap(value: BootstrapResult) -> dict[str, object]:
+    def bootstrap(value: BootstrapResult | None) -> dict[str, object] | None:
+        if value is None:
+            return None
         return {
             "estimate": value.estimate,
             "lower": value.lower,
@@ -920,6 +1061,7 @@ def _result_to_record(result: ExperimentResult) -> dict[str, object]:
                 "sufficient": item.sufficient,
                 "guardrail_passed": item.guardrail_passed,
                 "won": item.won,
+                "evidence_error": item.evidence_error,
             }
             for item in result.variants
         ],
@@ -929,7 +1071,9 @@ def _result_to_record(result: ExperimentResult) -> dict[str, object]:
 def _result_from_record(record: Any) -> ExperimentResult:
     payload = record.decision
 
-    def bootstrap(value: dict[str, Any]) -> BootstrapResult:
+    def bootstrap(value: dict[str, Any] | None) -> BootstrapResult | None:
+        if value is None:
+            return None
         return BootstrapResult(
             estimate=value["estimate"],
             lower=value["lower"],
@@ -973,6 +1117,7 @@ def _result_from_record(record: Any) -> ExperimentResult:
                 sufficient=item["sufficient"],
                 guardrail_passed=item["guardrail_passed"],
                 won=item["won"],
+                evidence_error=item.get("evidence_error"),
             )
             for item in payload["variants"]
         ),

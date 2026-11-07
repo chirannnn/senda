@@ -6,6 +6,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from controller.experiments import ExperimentEvaluator, ExperimentPlan
+from controller.storage.audit import AuditLog
 from controller.storage.store import (
     DatabaseStore,
     EventRecord,
@@ -45,11 +46,17 @@ def _experiment_plan(**changes):
     return ExperimentPlan(**values)
 
 
-async def _save(store, *, input_hash="a" * 64, estimate=0.12):
+async def _save(
+    store,
+    *,
+    experiment_id="experiment-recovery-1",
+    input_hash="a" * 64,
+    estimate=0.12,
+):
     async with store.transaction() as session:
         return await store.save_experiment_decision(
             session,
-            experiment_id="experiment-recovery-1",
+            experiment_id=experiment_id,
             workflow_id="experiment-workflow",
             config_version=4,
             cohort_id="default",
@@ -66,8 +73,10 @@ async def _save(store, *, input_hash="a" * 64, estimate=0.12):
 async def test_decision_persists_retries_idempotently_and_survives_store_reopen(
     postgres_store,
 ):
-    saved = await _save(postgres_store)
-    duplicate = await _save(postgres_store)
+    (saved, inserted) = await _save(postgres_store)
+    (duplicate, duplicate_inserted) = await _save(postgres_store)
+    assert inserted is True
+    assert duplicate_inserted is False
     assert saved.experiment_id == duplicate.experiment_id
     assert duplicate.input_hash == "a" * 64
     assert duplicate.decision["estimate"] == 0.12
@@ -96,6 +105,30 @@ async def test_reusing_experiment_id_for_different_snapshot_is_rejected(postgres
     assert stored is not None
     assert stored.input_hash == "a" * 64
     assert stored.decision["estimate"] == 0.12
+
+
+@pytest.mark.anyio
+async def test_second_experiment_family_for_same_config_is_rejected(postgres_store):
+    await _save(postgres_store)
+    with pytest.raises(ExperimentDecisionConflictError, match="config version"):
+        await _save(postgres_store, experiment_id="another-peek")
+
+
+@pytest.mark.anyio
+async def test_insufficient_decision_and_audit_replay_without_bootstrap(postgres_store):
+    plan = _experiment_plan(
+        experiment_id="experiment-insufficient",
+        cutoff_event_id=0,
+    )
+    evaluator = ExperimentEvaluator(postgres_store)
+    first = await evaluator.evaluate_and_persist(plan)
+    replay = await evaluator.evaluate_and_persist(plan)
+    assert first == replay
+    assert first.winner is None
+    assert first.variants[0].primary is None
+    assert first.decision.value == "insufficient_evidence"
+    records = await AuditLog(postgres_store).list_for_workflow("wf")
+    assert [record.action for record in records] == ["experiment_decided"]
 
 
 @pytest.mark.anyio

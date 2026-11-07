@@ -6,6 +6,7 @@ from controller.statistics.estimation import (
     arm_counts,
     estimate_rate_difference,
     holm_adjust,
+    required_noninferiority_sample_sizes,
     required_sample_sizes,
 )
 from controller.statistics.models import PersonOutcome
@@ -134,3 +135,42 @@ def test_zero_baseline_rate_is_a_valid_explicit_power_input():
         )[0]
         > 0
     )
+
+
+def test_noninferiority_sample_size_uses_the_configured_margin():
+    narrow = required_noninferiority_sample_sizes(
+        baseline_rate=0.8,
+        margin=0.02,
+        allocation_ratio=1,
+        intracluster_correlation=0,
+        mean_cluster_size=1,
+        alpha=0.05,
+        power=0.8,
+        comparisons=2,
+    )
+    wider = required_noninferiority_sample_sizes(
+        baseline_rate=0.8,
+        margin=0.1,
+        allocation_ratio=1,
+        intracluster_correlation=0,
+        mean_cluster_size=1,
+        alpha=0.05,
+        power=0.8,
+        comparisons=2,
+    )
+    assert narrow[0] > wider[0]
+
+
+@pytest.mark.parametrize("baseline_rate", [0, 1])
+def test_noninferiority_power_rejects_degenerate_baselines(baseline_rate):
+    with pytest.raises(ValueError, match="strictly between"):
+        required_noninferiority_sample_sizes(
+            baseline_rate=baseline_rate,
+            margin=0.02,
+            allocation_ratio=1,
+            intracluster_correlation=0,
+            mean_cluster_size=1,
+            alpha=0.05,
+            power=0.8,
+            comparisons=1,
+        )

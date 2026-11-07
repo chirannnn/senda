@@ -43,6 +43,10 @@ class BootstrapResult:
     replicates: int
 
 
+class BootstrapInsufficientDataError(ValueError):
+    """Person-level resamples repeatedly had undefined rate denominators."""
+
+
 def arm_counts(outcomes: Sequence[PersonOutcome]) -> dict[str, ArmCounts]:
     """Sum person outcomes without treating calls as independent people."""
     totals: dict[str, list[int]] = {}
@@ -98,20 +102,26 @@ def estimate_rate_difference(
     seed = int.from_bytes(hashlib.sha256(seed_key.encode()).digest()[:8], "big")
     rng = random.Random(seed)
     differences: list[float] = []
-    for _ in range(replicates):
+    attempts = 0
+    max_attempts = replicates * 10
+    while len(differences) < replicates and attempts < max_attempts:
+        attempts += 1
         control = _resample(by_arm[control_arm], rng)
         treatment = _resample(by_arm[treatment_arm], rng)
         estimate = _difference(control, treatment)
         if estimate is not None:
             differences.append(estimate)
     if len(differences) != replicates:
-        raise ValueError("bootstrap produced a zero-denominator replicate")
+        raise BootstrapInsufficientDataError(
+            "bootstrap could not form enough nonzero-denominator replicates"
+        )
     differences.sort()
     lower = _quantile(differences, alpha / 2)
     upper = _quantile(differences, 1 - alpha / 2)
-    p_not_greater = (sum(value <= evidence_threshold for value in differences) + 1) / (
-        replicates + 1
+    null_centered_tail = sum(
+        value - observed >= observed - evidence_threshold for value in differences
     )
+    p_not_greater = (null_centered_tail + 1) / (replicates + 1)
     return BootstrapResult(observed, lower, upper, p_not_greater, replicates)
 
 
@@ -159,8 +169,15 @@ def required_sample_sizes(
         alpha,
         power,
     )
-    if any(not math.isfinite(value) for value in values):
+    if any(
+        isinstance(value, bool)
+        or not isinstance(value, (int, float))
+        or not math.isfinite(value)
+        for value in values
+    ):
         raise ValueError("sample-size inputs must be finite")
+    if isinstance(comparisons, bool) or not isinstance(comparisons, int):
+        raise TypeError("comparison count must be a positive integer")
     if not 0 <= baseline_rate < 1 or not 0 < mde <= 1 - baseline_rate:
         raise ValueError("baseline and MDE must define a valid second-arm rate")
     if allocation_ratio <= 0 or mean_cluster_size < 1:
@@ -195,23 +212,53 @@ def required_noninferiority_sample_sizes(
     comparisons: int,
 ) -> tuple[int, int]:
     """Plan a non-inferiority comparison under an equal-rate alternative."""
-    if not math.isfinite(baseline_rate) or not 0 <= baseline_rate <= 1:
-        raise ValueError("guardrail baseline must be a finite rate in [0,1]")
-    if not math.isfinite(margin) or not 0 < margin <= 1:
+    if (
+        isinstance(baseline_rate, bool)
+        or not isinstance(baseline_rate, (int, float))
+        or not math.isfinite(baseline_rate)
+        or not 0 < baseline_rate < 1
+    ):
+        raise ValueError(
+            "guardrail baseline must be a finite rate strictly between 0 and 1"
+        )
+    if (
+        isinstance(margin, bool)
+        or not isinstance(margin, (int, float))
+        or not math.isfinite(margin)
+        or not 0 < margin <= 1
+    ):
         raise ValueError("non-inferiority margin must be in (0,1]")
     if (
-        not math.isfinite(allocation_ratio)
+        isinstance(allocation_ratio, bool)
+        or not isinstance(allocation_ratio, (int, float))
+        or not math.isfinite(allocation_ratio)
+        or isinstance(mean_cluster_size, bool)
+        or not isinstance(mean_cluster_size, (int, float))
         or allocation_ratio <= 0
         or not math.isfinite(mean_cluster_size)
         or mean_cluster_size < 1
     ):
         raise ValueError("allocation ratio and mean cluster size must be positive")
     if (
-        not math.isfinite(intracluster_correlation)
+        isinstance(intracluster_correlation, bool)
+        or not isinstance(intracluster_correlation, (int, float))
+        or not math.isfinite(intracluster_correlation)
         or not 0 <= intracluster_correlation <= 1
     ):
         raise ValueError("intracluster correlation must be in [0,1]")
-    if not 0 < alpha < 1 or not 0 < power < 1 or comparisons < 1:
+    if (
+        isinstance(alpha, bool)
+        or not isinstance(alpha, (int, float))
+        or not math.isfinite(alpha)
+        or isinstance(power, bool)
+        or not isinstance(power, (int, float))
+        or not math.isfinite(power)
+        or isinstance(comparisons, bool)
+        or not isinstance(comparisons, int)
+        or not 0 < alpha < 1
+        or not 0 < power < 1
+        or comparisons < 1
+    ):
         raise ValueError("alpha, power and comparison count are invalid")
     z_alpha = NormalDist().inv_cdf(1 - (alpha / comparisons))
     z_power = NormalDist().inv_cdf(power)

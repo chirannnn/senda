@@ -556,12 +556,16 @@ class DatabaseStore:
             raise ValueError("experiment query identity and arms are required")
         if (
             isinstance(config_version, bool)
+            or not isinstance(config_version, int)
             or config_version < 0
             or isinstance(cutoff_event_id, bool)
+            or not isinstance(cutoff_event_id, int)
             or cutoff_event_id < 0
             or isinstance(after_event_id, bool)
+            or not isinstance(after_event_id, int)
             or after_event_id < 0
             or isinstance(limit, bool)
+            or not isinstance(limit, int)
             or limit < 1
         ):
             raise ValueError("experiment query versions, cursor and limit are invalid")
@@ -603,7 +607,7 @@ class DatabaseStore:
         plan_snapshot: dict[str, object],
         input_snapshot: dict[str, object],
         decision: dict[str, object],
-    ) -> ExperimentDecision:
+    ) -> tuple[ExperimentDecision, bool]:
         """Persist one immutable decision or verify an identical retry."""
         self.require_transaction(session)
         if not experiment_id or not policy_version or not cohort_id:
@@ -639,11 +643,21 @@ class DatabaseStore:
         statement = (
             postgresql_insert(ExperimentDecision)
             .values(**values)
-            .on_conflict_do_nothing(index_elements=[ExperimentDecision.experiment_id])
+            .on_conflict_do_nothing()
         )
         inserted = await session.execute(statement)
         stored = await session.get(ExperimentDecision, experiment_id)
         if stored is None:
+            family = await session.scalar(
+                select(ExperimentDecision).where(
+                    ExperimentDecision.workflow_id == workflow_id,
+                    ExperimentDecision.config_version == config_version,
+                )
+            )
+            if family is not None:
+                raise ExperimentDecisionConflictError(
+                    "a decision already exists for this workflow config version"
+                )
             raise RuntimeError("experiment decision disappeared after insert")
         if inserted.rowcount == 0 and any(
             getattr(stored, key) != value for key, value in values.items()
@@ -651,7 +665,7 @@ class DatabaseStore:
             raise ExperimentDecisionConflictError(
                 f"experiment ID {experiment_id!r} was reused for different inputs or outcome"
             )
-        return stored
+        return stored, inserted.rowcount == 1
 
     async def get_experiment_decision(
         self, experiment_id: str
@@ -660,6 +674,19 @@ class DatabaseStore:
         self._ensure_open()
         async with self._sessions() as session:
             return await session.get(ExperimentDecision, experiment_id)
+
+    async def get_experiment_decision_for_config(
+        self, workflow_id: str, config_version: int
+    ) -> ExperimentDecision | None:
+        """Read the single fixed comparison family allowed per workflow version."""
+        self._ensure_open()
+        async with self._sessions() as session:
+            return await session.scalar(
+                select(ExperimentDecision).where(
+                    ExperimentDecision.workflow_id == workflow_id,
+                    ExperimentDecision.config_version == config_version,
+                )
+            )
 
     async def list_experiment_decisions(
         self, *, workflow_id: str | None = None

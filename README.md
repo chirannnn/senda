@@ -97,8 +97,8 @@ stops after any in-flight HTTP operation finishes. JSON logs go to stderr; the s
 are not logged. An ambiguous advance response exits safely without issuing another advance.
 
 The runtime persists simulator events and advance intents, then derives durable event facts after startup
-reconciliation and each committed advance. It does not make optimization, experimentation, or governance
-decisions; those remain later plan chunks.
+reconciliation and each committed advance. It does not schedule experiments or automatically invoke governance;
+those remain explicit callable components.
 
 ### Durable storage (Chunk 2)
 
@@ -170,6 +170,21 @@ apply intents reuse `outbox_operations`. Governance audit entries retain the exa
 evidence, approval identity and reconciled outcome. No customer-facing change has an auto-apply path in this
 chunk.
 
+### Statistical comparison (Chunk 6)
+
+`controller/statistics/` contains deterministic person-cluster estimation, Holm correction and explicit
+superiority/non-inferiority sample-size planning. `controller/experiments.py` reads valid, persisted KPI facts at
+a fixed time window and event cutoff, persists one reproducible decision per workflow config version, and only
+submits a matching safe winner through Chunk 5 approvals. Pickup and engagement stay separate. The evaluator
+excludes people observed in multiple tested arms because the simulator does not promise person-stable variant
+assignment. It does not assign traffic or run inside the runtime loop; callers must provide the baseline,
+allocation, clustering, power and imbalance assumptions. Missing assumptions or workflow-configured guardrails
+fail closed. See [docs/DECISION_POLICY.md](docs/DECISION_POLICY.md) for formulas, stopping rules and limits.
+
+Experiment decisions and input hashes are stored in `experiment_decisions` (migrations `0006` and `0007`) and
+audited atomically. A workflow config version admits one fixed comparison family of up to three challengers, to
+prevent new IDs or later cutoffs from repeatedly testing the same version.
+
 ### Repository layout
 
 ```text
@@ -178,8 +193,10 @@ controller/
   clients/          simulator HTTP client
   config/           runtime settings
   errors/           typed application errors
+  experiments.py    fixed-window evidence evaluation and governed proposal integration
   governance/       proposal validation, approval lifecycle, apply reconciliation
   observability/    structured logging
+  statistics/       cluster estimation, sample planning and multiplicity
   runtime/          process lifecycle
   storage/          database models, async store, audit log
   ingestion/        descriptor validation, NDJSON parsing, replay, and advance recovery
@@ -188,10 +205,12 @@ tests/
   unit/             isolated controller and ingestion tests
   unit/governance/  proposal payload and lifecycle transition tests
   unit/analytics/   fact, KPI, and cohort tests
+  unit/statistics/  bootstrap, power and Holm tests
   integration/analytics/  PostgreSQL analytics and lead/call join tests
   integration/storage/  PostgreSQL-backed persistence tests
   integration/ingestion/ PostgreSQL-backed ingestion/recovery tests
   integration/governance/ PostgreSQL and mocked HTTP lifecycle/recovery tests
+  integration/experiments/ PostgreSQL-backed governed proposal tests
   contract/         simulator contract tests
 ```
 

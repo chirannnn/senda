@@ -289,6 +289,11 @@ class ExperimentDecision(Base):
         UniqueConstraint(
             "workflow_id", "experiment_id", name="uq_experiment_workflow_identity"
         ),
+        UniqueConstraint(
+            "workflow_id",
+            "config_version",
+            name="uq_experiment_workflow_config_family",
+        ),
         Index(
             "ix_experiment_decisions_workflow_created",
             "workflow_id",

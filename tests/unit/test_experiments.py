@@ -94,7 +94,7 @@ def _fact(
 @pytest.mark.anyio
 async def test_insufficient_evidence_does_not_choose_winner():
     store = FactStore([_fact(1, "person", "V1", engaged=True)])
-    result = await ExperimentEvaluator(store).evaluate(_plan())
+    result = await ExperimentEvaluator(store)._evaluate_snapshot(_plan())
     assert result.decision == Decision.INSUFFICIENT_EVIDENCE
     assert result.winner is None
     assert store.query_count == 2
@@ -118,7 +118,9 @@ async def test_winner_uses_valid_current_version_facts_and_excludes_crossovers()
             _fact(event_id + 3, "old-version", "V2", engaged=True, version=1),
         ]
     )
-    result = await ExperimentEvaluator(FactStore(facts), page_size=7).evaluate(_plan())
+    result = await ExperimentEvaluator(
+        FactStore(facts), page_size=7
+    )._evaluate_snapshot(_plan())
     assert result.decision == Decision.WINNER
     assert result.winner == "V2"
     assert result.excluded_crossover_people == 1
@@ -126,6 +128,97 @@ async def test_winner_uses_valid_current_version_facts_and_excludes_crossovers()
     assert variant.primary_counts["V2"].successes == 99
     assert variant.primary_counts["V2"].people == 100
     assert variant.guardrail_margin == 0.19
+
+
+@pytest.mark.anyio
+async def test_holm_family_includes_planned_but_unrun_challenger():
+    facts = []
+    event_id = 1
+    for arm, successes in (("V1", 1), ("V2", 99)):
+        for index in range(100):
+            facts.append(
+                _fact(event_id, f"{arm}-{index}", arm, engaged=index < successes)
+            )
+            event_id += 1
+    plan = _plan(
+        challengers=("V2", "V3"),
+        allocation_probabilities={"V1": 0.34, "V2": 0.33, "V3": 0.33},
+    )
+    result = await ExperimentEvaluator(FactStore(facts))._evaluate_snapshot(plan)
+    observed, unrun = result.variants
+    assert result.decision == Decision.WINNER
+    assert observed.primary is not None
+    assert (
+        observed.primary_adjusted_p
+        >= observed.primary.p_not_greater_than_threshold * 1.99
+    )
+    assert unrun.sufficient is False
+    assert unrun.primary is None
+
+
+@pytest.mark.anyio
+async def test_guardrail_harm_makes_a_primary_lift_unsafe():
+    facts = []
+    event_id = 1
+    for arm in ("V1", "V2"):
+        for index in range(100):
+            connected = arm == "V1" or index < 60
+            engaged = arm == "V2" and connected
+            facts.append(
+                _fact(
+                    event_id,
+                    f"{arm}-{index}",
+                    arm,
+                    engaged=engaged,
+                    connected=connected,
+                )
+            )
+            event_id += 1
+    result = await ExperimentEvaluator(FactStore(facts))._evaluate_snapshot(_plan())
+    assert result.decision == Decision.UNSAFE
+    assert result.winner is None
+    assert result.variants[0].primary is not None
+    assert result.variants[0].primary.estimate == pytest.approx(1.0)
+    assert result.variants[0].guardrail_passed is False
+
+
+@pytest.mark.anyio
+async def test_allocation_imbalance_is_insufficient_even_when_rates_are_better():
+    facts = []
+    event_id = 1
+    for arm, count, successes in (("V1", 100, 1), ("V2", 95, 94)):
+        for index in range(count):
+            facts.append(
+                _fact(event_id, f"{arm}-{index}", arm, engaged=index < successes)
+            )
+            event_id += 1
+    result = await ExperimentEvaluator(FactStore(facts))._evaluate_snapshot(
+        _plan(imbalance_tolerance=0.02)
+    )
+    assert result.decision == Decision.INSUFFICIENT_EVIDENCE
+    assert result.winner is None
+    assert result.variants[0].balanced is False
+    assert result.variants[0].won is False
+
+
+@pytest.mark.anyio
+async def test_exact_statistical_tie_uses_variant_id_as_final_tiebreak():
+    facts = []
+    event_id = 1
+    for arm, successes in (("V1", 1), ("V2", 99), ("V3", 99)):
+        for index in range(100):
+            facts.append(
+                _fact(event_id, f"{arm}-{index}", arm, engaged=index < successes)
+            )
+            event_id += 1
+    plan = _plan(
+        challengers=("V2", "V3"),
+        allocation_probabilities={"V1": 0.34, "V2": 0.33, "V3": 0.33},
+        imbalance_tolerance=0.1,
+    )
+    result = await ExperimentEvaluator(FactStore(facts))._evaluate_snapshot(plan)
+    assert result.decision == Decision.WINNER
+    assert result.winner == "V2"
 
 
 def test_missing_or_malformed_workflow_guardrail_is_rejected():
