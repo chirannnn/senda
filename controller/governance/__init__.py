@@ -2,11 +2,18 @@
 
 from controller.governance.proposals import ProposalPayload, submit_proposal
 from controller.governance.reconcile import reconcile_approval_submission
-from controller.governance.state_machine import ProposalStatus, transition
+from controller.governance.state_machine import (
+    ProposalStatus,
+    poll_approval,
+    reconcile_approval_event,
+    transition,
+)
 
 __all__ = [
     "ProposalPayload",
     "ProposalStatus",
+    "poll_approval",
+    "reconcile_approval_event",
     "reconcile_approval_submission",
     "submit_proposal",
     "transition",

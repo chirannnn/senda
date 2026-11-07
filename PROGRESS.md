@@ -28,7 +28,7 @@
 | 1. Proposal validation and lifecycle model | COMPLETE | Focused governance unit tests: 31 passed; Ruff check/format and `git diff --check` passed | pending commit |
 | 2. Durable governance storage | COMPLETE | Isolated PostgreSQL integration and schema tests: 10 passed; migration `0005` applied by the test fixture; Ruff check/format and `git diff --check` passed | pending commit |
 | 3. Approval submission and reconciliation | COMPLETE | Focused client/governance tests: 48 passed with isolated PostgreSQL; Ruff check/format and `git diff --check` passed | pending commit |
-| 4. Approval state machine | NOT STARTED | — | — |
+| 4. Approval state machine | COMPLETE | Focused state-machine plus submission tests: 47 passed with isolated PostgreSQL; Ruff check/format and `git diff --check` passed | pending commit |
 | 5. Stale checks and safe apply | NOT STARTED | — | — |
 | 6. Integration and hardening | NOT STARTED | — | — |
 
@@ -37,6 +37,8 @@ Subtask 1 adds an immutable approval request payload matching the documented req
 Subtask 2 adds `governance_proposals` in migration `0005_governance_proposals`, storing immutable request payload/hash, workflow/base version, local/remote status, approval ID, and reconciliation outcome. `DatabaseStore` can create/get/list/update proposals. Proposal creation can share a transaction with its outbox operation; duplicate identical IDs are idempotent, while a different payload under the same ID fails. PostgreSQL tests cover persistence, outbox linkage, duplicate conflict, invalid status constraints, and rollback of proposal plus intent. The focused run used an isolated temporary PostgreSQL 18 cluster on localhost; no configured development database was touched.
 
 Subtask 3 adds GET client operations for current config, config history, and approval list/get, plus a single-attempt POST `/approvals`. Approval responses are validated for the documented IDs, status, base version, and changed dimensions. `submit_proposal()` persists the immutable payload, outbox intent, and pre-submit audit evidence in one transaction before sending the POST. It reconciles duplicate 409 and ambiguous outcomes by listing approvals for the workflow and matching `proposal_id`; no match or unavailable lookup leaves the proposal and outbox in `reconciliation_required`, with no blind retry. A confirmed approval stores its ID/status and closes the submission outbox. Mocked HTTP/PostgreSQL tests verify intent-before-POST, duplicate lookup, timeout-after-acceptance recovery, no-match manual review, and lookup outage. The 48-test focused suite passed.
+
+Subtask 4 adds bounded approval polling with per-read timeouts and an event reconciliation function for persisted `approval_decided` payloads. Both use the same transition validator and durable proposal updater; repeated same-status observations do not add duplicate audit rows. Unknown approval events are ignored until the approval ID is known, and workflow mismatches fail closed. Tests cover pending, approved, rejected, expired, applied, and lapsed observations, polling limits/idempotence, event application, and invalid event identity. The focused state-machine/submission suite passed 47 tests.
 
 ## Chunk 4 subtask progress
 

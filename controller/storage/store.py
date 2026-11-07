@@ -768,6 +768,18 @@ class DatabaseStore:
         async with self._sessions() as session:
             return await session.get(GovernanceProposal, proposal_id)
 
+    async def get_governance_proposal_by_approval_id(
+        self, approval_id: str
+    ) -> GovernanceProposal | None:
+        """Resolve a simulator decision event to its persisted proposal."""
+        self._ensure_open()
+        async with self._sessions() as session:
+            return await session.scalar(
+                select(GovernanceProposal).where(
+                    GovernanceProposal.approval_id == approval_id
+                )
+            )
+
     async def list_governance_proposals(
         self,
         *,

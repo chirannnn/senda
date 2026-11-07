@@ -15,6 +15,7 @@ from controller.governance.state_machine import ProposalStatus, transition
         (ProposalStatus.APPLYING, ProposalStatus.APPLIED),
         (ProposalStatus.APPLYING, ProposalStatus.LAPSED),
         (ProposalStatus.APPROVED, ProposalStatus.STALE),
+        (ProposalStatus.RECONCILIATION_REQUIRED, ProposalStatus.APPLIED),
     ],
 )
 def test_documented_lifecycle_transitions(current, target):
@@ -35,6 +36,7 @@ def test_same_state_observation_is_idempotent():
         (ProposalStatus.REJECTED, ProposalStatus.APPLIED),
         (ProposalStatus.EXPIRED, ProposalStatus.APPLYING),
         (ProposalStatus.APPLIED, ProposalStatus.PENDING),
+        (ProposalStatus.PENDING, ProposalStatus.APPLIED),
     ],
 )
 def test_invalid_or_terminal_transitions_fail(current, target):
