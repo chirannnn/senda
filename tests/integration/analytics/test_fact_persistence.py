@@ -6,7 +6,9 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
+from controller.analytics.cohorts import definitions_from_config
 from controller.analytics.facts import PROCESSOR_NAME, KpiFactProcessor
+from controller.analytics.kpis import KpiCalculator
 from controller.storage.models import KpiFact
 from controller.storage.store import DatabaseStore, EventRecord, KpiFactRecord
 
@@ -98,6 +100,31 @@ async def test_fact_derivation_is_idempotent_and_survives_store_reopen(postgres_
             (1, 1, 1, 0),
             (1, 0, 0, 0),
         ]
+        summary = await KpiCalculator(reopened).calculate("analytics-wf")
+        assert (
+            summary.dials,
+            summary.connected,
+            summary.concluded,
+            summary.uploaded,
+        ) == (
+            2,
+            1,
+            1,
+            20,
+        )
+        assert summary.pickup_rate == 0.5
+        assert summary.engagement_rate == 1.0
+        observed_arm = await KpiCalculator(reopened).calculate(
+            "analytics-wf",
+            config_version=2,
+            cohort_id="default",
+            variant={"voice": "V1"},
+        )
+        assert (observed_arm.dials, observed_arm.connected, observed_arm.concluded) == (
+            1,
+            1,
+            1,
+        )
     finally:
         await reopened.close()
 
@@ -128,3 +155,42 @@ async def test_failed_fact_transaction_does_not_advance_analytics_cursor(
         await store.commit_kpi_page("failure-test", [invalid_fk_fact], 999999)
     assert await store.get_analytics_cursor("failure-test") == 0
     assert await store.get_event(999999) is None
+
+
+@pytest.mark.anyio
+async def test_cohort_definitions_persist_once_per_config_version(postgres_store):
+    store: DatabaseStore = postgres_store
+    definitions = definitions_from_config(
+        "cohort-wf",
+        4,
+        {"cohorts": [{"id": "senior", "where": {"age_band": ["60+"]}}]},
+    )
+    records = [item.to_record() for item in definitions]
+    await store.save_cohort_definitions("cohort-wf", 4, records)
+    await store.save_cohort_definitions("cohort-wf", 4, records)
+    persisted = await store.list_cohort_definitions("cohort-wf", 4)
+    assert [row.cohort_id for row in persisted] == ["senior", "default"]
+    assert [row.ordinal for row in persisted] == [0, 1]
+    assert persisted[0].predicate == {"age_band": ["60+"]}
+
+    changed = definitions_from_config(
+        "cohort-wf",
+        4,
+        {"cohorts": [{"id": "senior", "where": {"age_band": ["46-60"]}}]},
+    )
+    with pytest.raises(ValueError, match="changed without incrementing"):
+        await store.save_cohort_definitions(
+            "cohort-wf", 4, [item.to_record() for item in changed]
+        )
+    version_five = definitions_from_config(
+        "cohort-wf",
+        5,
+        {"cohorts": [{"id": "senior", "where": {"age_band": ["46-60"]}}]},
+    )
+    await store.save_cohort_definitions(
+        "cohort-wf", 5, [item.to_record() for item in version_five]
+    )
+    assert [
+        row.config_version
+        for row in await store.list_cohort_definitions("cohort-wf", 5)
+    ] == [5, 5]

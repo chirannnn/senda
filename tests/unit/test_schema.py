@@ -7,6 +7,7 @@ from controller.storage.models import (
     OutboxOperation,
     ProcessingCheckpoint,
     SimulatorEvent,
+    VersionedCohortDefinition,
     WorkflowReference,
 )
 
@@ -19,6 +20,7 @@ def test_durable_schema_contains_required_versioned_entities():
         "processing_checkpoints",
         "analytics_checkpoints",
         "kpi_facts",
+        "cohort_definitions",
         "audit_records",
         "outbox_operations",
     } == set(Base.metadata.tables)
@@ -60,4 +62,17 @@ def test_kpi_facts_are_unique_provenance_linked_and_indexed():
     assert facts.c.source_event_id.foreign_keys
     assert any(
         index.name == "ix_kpi_facts_workflow_version_time" for index in facts.indexes
+    )
+
+
+def test_cohort_rules_have_a_versioned_stable_key_and_order():
+    cohorts = Base.metadata.tables[VersionedCohortDefinition.__tablename__]
+    assert cohorts.primary_key.columns.keys() == [
+        "workflow_id",
+        "config_version",
+        "cohort_id",
+    ]
+    assert any(
+        constraint.name == "uq_cohort_def_workflow_version_ordinal"
+        for constraint in cohorts.constraints
     )

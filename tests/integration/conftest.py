@@ -11,6 +11,7 @@ from controller.storage.models import (
     OutboxOperation,
     ProcessingCheckpoint,
     SimulatorEvent,
+    VersionedCohortDefinition,
     WorkflowReference,
 )
 from controller.storage.store import DatabaseStore
@@ -39,6 +40,7 @@ async def postgres_store():
                 AuditRecord,
                 KpiFact,
                 AnalyticsCheckpoint,
+                VersionedCohortDefinition,
                 SimulatorEvent,
                 ProcessingCheckpoint,
                 ControllerRun,

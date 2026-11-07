@@ -13,7 +13,8 @@ from uuid import UUID
 
 from alembic import command
 from alembic.config import Config
-from sqlalchemy import func, or_, select, text
+from sqlalchemy import cast, func, or_, select, text
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 from sqlalchemy.engine import URL, Connection, make_url
 from sqlalchemy.exc import ArgumentError
@@ -32,6 +33,7 @@ from controller.storage.models import (
     OutboxOperation,
     ProcessingCheckpoint,
     SimulatorEvent,
+    VersionedCohortDefinition,
     WorkflowReference,
 )
 
@@ -339,6 +341,129 @@ class DatabaseStore:
                     f"to {scanned_through_event_id}"
                 )
         return inserted_count
+
+    async def save_cohort_definitions(
+        self,
+        workflow_id: str,
+        config_version: int,
+        definitions: list[dict[str, object]],
+    ) -> None:
+        """Persist immutable ordered rules; changed rules need a new version."""
+        async with self.transaction() as session:
+            await self.ensure_workflow(session, workflow_id)
+            seen_ids: set[str] = set()
+            seen_ordinals: set[int] = set()
+            for definition in definitions:
+                cohort_id = definition.get("cohort_id")
+                ordinal = definition.get("ordinal")
+                predicate = definition.get("predicate")
+                if (
+                    not isinstance(cohort_id, str)
+                    or not cohort_id
+                    or isinstance(ordinal, bool)
+                    or not isinstance(ordinal, int)
+                    or ordinal < 0
+                    or not isinstance(predicate, dict)
+                    or cohort_id in seen_ids
+                    or ordinal in seen_ordinals
+                ):
+                    raise ValueError(
+                        "cohort records must have unique IDs/orders and predicates"
+                    )
+                seen_ids.add(cohort_id)
+                seen_ordinals.add(ordinal)
+                table = VersionedCohortDefinition
+                statement = (
+                    postgresql_insert(table)
+                    .values(
+                        workflow_id=workflow_id,
+                        config_version=config_version,
+                        cohort_id=cohort_id,
+                        ordinal=ordinal,
+                        predicate=predicate,
+                    )
+                    .on_conflict_do_nothing(
+                        index_elements=[
+                            table.workflow_id,
+                            table.config_version,
+                            table.cohort_id,
+                        ]
+                    )
+                )
+                await session.execute(statement)
+                stored = await session.get(
+                    table, (workflow_id, config_version, cohort_id)
+                )
+                if (
+                    stored is None
+                    or stored.ordinal != ordinal
+                    or stored.predicate != predicate
+                ):
+                    raise ValueError(
+                        "cohort definition changed without incrementing config version"
+                    )
+
+    async def list_cohort_definitions(
+        self, workflow_id: str, config_version: int
+    ) -> list[VersionedCohortDefinition]:
+        """Read the immutable ordered rules for one observed config version."""
+        self._ensure_open()
+        async with self._sessions() as session:
+            statement = (
+                select(VersionedCohortDefinition)
+                .where(
+                    VersionedCohortDefinition.workflow_id == workflow_id,
+                    VersionedCohortDefinition.config_version == config_version,
+                )
+                .order_by(VersionedCohortDefinition.ordinal)
+            )
+            return list((await session.scalars(statement)).all())
+
+    async def query_kpi_totals(
+        self,
+        workflow_id: str,
+        *,
+        config_version: int | None = None,
+        cohort_id: str | None = None,
+        variant: dict[str, object] | None = None,
+        start_at: datetime | None = None,
+        end_at: datetime | None = None,
+    ) -> tuple[int, int, int, int, int, int, int]:
+        """Aggregate bounded SQL facts for a half-open event-time window."""
+        if not workflow_id:
+            raise ValueError("workflow ID is required")
+        if config_version is not None and config_version < 0:
+            raise ValueError("config version must be nonnegative")
+        if start_at is not None and start_at.tzinfo is None:
+            raise ValueError("start timestamp must include a timezone")
+        if end_at is not None and end_at.tzinfo is None:
+            raise ValueError("end timestamp must include a timezone")
+        if start_at is not None and end_at is not None and end_at <= start_at:
+            raise ValueError("end timestamp must follow start timestamp")
+        conditions = [KpiFact.workflow_id == workflow_id]
+        if config_version is not None:
+            conditions.append(KpiFact.config_version == config_version)
+        if cohort_id is not None:
+            conditions.append(KpiFact.observed_cohort_id == cohort_id)
+        if variant is not None:
+            conditions.append(cast(KpiFact.variant, JSONB) == cast(variant, JSONB))
+        if start_at is not None:
+            conditions.append(KpiFact.occurred_at >= start_at)
+        if end_at is not None:
+            conditions.append(KpiFact.occurred_at < end_at)
+        statement = select(
+            func.coalesce(func.sum(KpiFact.dials), 0),
+            func.coalesce(func.sum(KpiFact.connected), 0),
+            func.coalesce(func.sum(KpiFact.concluded), 0),
+            func.coalesce(func.sum(KpiFact.uploaded), 0),
+            func.count().filter(KpiFact.quality == "invalid"),
+            func.count().filter(KpiFact.quality == "incomplete"),
+            func.count().filter(KpiFact.quality == "unsupported"),
+        ).where(*conditions)
+        self._ensure_open()
+        async with self._sessions() as session:
+            row = (await session.execute(statement)).one()
+            return tuple(int(value) for value in row)  # type: ignore[return-value]
 
     async def create_run(
         self, session: AsyncSession, details: dict[str, object] | None = None

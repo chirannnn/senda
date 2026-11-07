@@ -56,7 +56,9 @@ def derive_fact(event: SimulatorEvent) -> KpiFactRecord:
     lead_id = _string(payload.get("lead_id"))
     person_id = _string(payload.get("person_id"))
     cohort_id = _string(payload.get("cohort_id"))
-    version_value = payload.get("config_version")
+    version_value = payload.get(
+        "config_version", payload.get("config_version_at_creation")
+    )
     config_version = (
         version_value
         if isinstance(version_value, int)
@@ -107,6 +109,8 @@ def derive_fact(event: SimulatorEvent) -> KpiFactRecord:
             concluded = int(disposition in _CONCLUDED_DISPOSITIONS)
             if lead_id is None:
                 quality, detail = "incomplete", "call event has no valid lead_id"
+            elif config_version is None:
+                quality, detail = "incomplete", "call has no valid config_version"
 
     occurred_at = _timestamp(payload.get("ts"))
     if occurred_at is None and quality == "valid":

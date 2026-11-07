@@ -14,6 +14,7 @@ from sqlalchemy import (
     Index,
     String,
     Text,
+    UniqueConstraint,
     Uuid,
     func,
 )
@@ -154,6 +155,36 @@ class KpiFact(Base):
     derived_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
+
+
+class VersionedCohortDefinition(Base):
+    """Immutable ordered cohort rule observed for a workflow config version."""
+
+    __tablename__ = "cohort_definitions"
+    __table_args__ = (
+        CheckConstraint("config_version >= 0", name="ck_cohort_def_config_version"),
+        CheckConstraint("ordinal >= 0", name="ck_cohort_def_ordinal"),
+        UniqueConstraint(
+            "workflow_id",
+            "config_version",
+            "ordinal",
+            name="uq_cohort_def_workflow_version_ordinal",
+        ),
+        Index(
+            "ix_cohort_definitions_workflow_version_order",
+            "workflow_id",
+            "config_version",
+            "ordinal",
+        ),
+    )
+
+    workflow_id: Mapped[str] = mapped_column(
+        Text, ForeignKey("workflow_references.workflow_id"), primary_key=True
+    )
+    config_version: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    cohort_id: Mapped[str] = mapped_column(Text, primary_key=True)
+    ordinal: Mapped[int] = mapped_column(nullable=False)
+    predicate: Mapped[dict[str, object]] = mapped_column(JSON, nullable=False)
 
 
 class AuditRecord(Base):
