@@ -232,6 +232,53 @@ class AuditRecord(Base):
     )
 
 
+class GovernanceProposal(Base):
+    """Durable proposal identity, immutable request body, and remote lifecycle state."""
+
+    __tablename__ = "governance_proposals"
+    __table_args__ = (
+        CheckConstraint("base_version >= 0", name="ck_governance_proposals_version"),
+        CheckConstraint(
+            "status IN ('draft', 'submitted', 'pending', 'approved', 'rejected', "
+            "'expired', 'applying', 'applied', 'lapsed', 'stale', "
+            "'reconciliation_required')",
+            name="ck_governance_proposals_status",
+        ),
+        Index(
+            "ix_governance_proposals_workflow_status",
+            "workflow_id",
+            "status",
+            "created_at",
+        ),
+        UniqueConstraint("approval_id", name="uq_governance_proposals_approval_id"),
+    )
+
+    proposal_id: Mapped[str] = mapped_column(Text, primary_key=True)
+    workflow_id: Mapped[str] = mapped_column(
+        Text, ForeignKey("workflow_references.workflow_id"), nullable=False
+    )
+    base_version: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    payload: Mapped[dict[str, object]] = mapped_column(JSON, nullable=False)
+    payload_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="draft", server_default="draft"
+    )
+    approval_id: Mapped[str | None] = mapped_column(Text)
+    remote_status: Mapped[str | None] = mapped_column(Text)
+    outcome: Mapped[dict[str, object]] = mapped_column(
+        JSON, nullable=False, default=dict, server_default="{}"
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+
 class OutboxOperation(Base):
     """Durable record of an external operation requiring later reconciliation."""
 

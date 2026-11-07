@@ -3,6 +3,7 @@ from sqlalchemy import JSON
 from controller.storage.models import (
     AuditRecord,
     Base,
+    GovernanceProposal,
     KpiFact,
     OutboxOperation,
     ProcessingCheckpoint,
@@ -23,6 +24,7 @@ def test_durable_schema_contains_required_versioned_entities():
         "cohort_definitions",
         "audit_records",
         "outbox_operations",
+        "governance_proposals",
     } == set(Base.metadata.tables)
 
 
@@ -47,6 +49,11 @@ def test_checkpoint_and_outbox_have_safety_constraints():
         for item in outbox.constraints
         if hasattr(item, "sqltext")
     )
+
+    proposals = Base.metadata.tables[GovernanceProposal.__tablename__]
+    assert proposals.primary_key.columns.keys() == ["proposal_id"]
+    assert proposals.c.payload_hash.type.length == 64
+    assert proposals.c.workflow_id.foreign_keys
 
 
 def test_audit_records_reference_known_workflows():

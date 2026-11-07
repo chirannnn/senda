@@ -30,6 +30,7 @@ from controller.errors import ConfigurationError
 from controller.storage.models import (
     AnalyticsCheckpoint,
     ControllerRun,
+    GovernanceProposal,
     KpiFact,
     OutboxOperation,
     ProcessingCheckpoint,
@@ -84,6 +85,10 @@ class CheckpointRegressionError(RuntimeError):
 
 class OutboxConflictError(RuntimeError):
     """A stable outbox identifier was reused for a different operation."""
+
+
+class GovernanceProposalConflictError(RuntimeError):
+    """A stable proposal ID was reused for a different request payload."""
 
 
 class DatabaseStore:
@@ -699,6 +704,114 @@ class DatabaseStore:
                 f"outbox key {dedupe_key!r} was reused for a different operation"
             )
         return existing
+
+    async def create_governance_proposal(
+        self,
+        session: AsyncSession,
+        *,
+        proposal_id: str,
+        workflow_id: str,
+        base_version: int,
+        payload: dict[str, object],
+        payload_hash: str,
+        status: str = "draft",
+    ) -> GovernanceProposal:
+        """Persist an immutable proposal in the caller's transaction."""
+        self.require_transaction(session)
+        if not proposal_id or not workflow_id:
+            raise ValueError("proposal and workflow IDs are required")
+        if (
+            isinstance(base_version, bool)
+            or not isinstance(base_version, int)
+            or base_version < 0
+        ):
+            raise ValueError("base version must be a nonnegative integer")
+        if (
+            not isinstance(payload_hash, str)
+            or len(payload_hash) != 64
+            or any(character not in "0123456789abcdef" for character in payload_hash)
+        ):
+            raise ValueError("proposal payload hash must be a SHA-256 hex digest")
+        await self.ensure_workflow(session, workflow_id)
+        statement = (
+            postgresql_insert(GovernanceProposal)
+            .values(
+                proposal_id=proposal_id,
+                workflow_id=workflow_id,
+                base_version=base_version,
+                payload=payload,
+                payload_hash=payload_hash,
+                status=status,
+            )
+            .on_conflict_do_nothing(index_elements=[GovernanceProposal.proposal_id])
+        )
+        result = await session.execute(statement)
+        existing = await session.get(GovernanceProposal, proposal_id)
+        if existing is None:
+            raise RuntimeError("governance proposal was not visible after insert")
+        if result.rowcount == 0 and (
+            existing.workflow_id != workflow_id
+            or existing.base_version != base_version
+            or existing.payload != payload
+            or existing.payload_hash != payload_hash
+        ):
+            raise GovernanceProposalConflictError(
+                f"proposal ID {proposal_id!r} was reused for a different payload"
+            )
+        return existing
+
+    async def get_governance_proposal(
+        self, proposal_id: str
+    ) -> GovernanceProposal | None:
+        """Read a durable proposal by its stable public ID."""
+        self._ensure_open()
+        async with self._sessions() as session:
+            return await session.get(GovernanceProposal, proposal_id)
+
+    async def list_governance_proposals(
+        self,
+        *,
+        workflow_id: str | None = None,
+        statuses: tuple[str, ...] | None = None,
+    ) -> list[GovernanceProposal]:
+        """List persisted proposals in creation order, optionally filtered."""
+        self._ensure_open()
+        statement = select(GovernanceProposal)
+        if workflow_id is not None:
+            statement = statement.where(GovernanceProposal.workflow_id == workflow_id)
+        if statuses is not None:
+            statement = statement.where(GovernanceProposal.status.in_(statuses))
+        statement = statement.order_by(
+            GovernanceProposal.created_at, GovernanceProposal.proposal_id
+        )
+        async with self._sessions() as session:
+            return list((await session.scalars(statement)).all())
+
+    async def update_governance_proposal(
+        self,
+        session: AsyncSession,
+        proposal_id: str,
+        *,
+        status: str,
+        approval_id: str | None = None,
+        remote_status: str | None = None,
+        outcome: dict[str, object] | None = None,
+    ) -> GovernanceProposal | None:
+        """Update local lifecycle observations inside the caller's transaction."""
+        self.require_transaction(session)
+        proposal = await session.get(GovernanceProposal, proposal_id)
+        if proposal is None:
+            return None
+        proposal.status = status
+        if approval_id is not None:
+            proposal.approval_id = approval_id
+        if remote_status is not None:
+            proposal.remote_status = remote_status
+        if outcome is not None:
+            proposal.outcome = outcome
+        proposal.updated_at = datetime.now(UTC)
+        await session.flush()
+        return proposal
 
     async def get_outbox_operation(self, dedupe_key: str) -> OutboxOperation | None:
         self._ensure_open()

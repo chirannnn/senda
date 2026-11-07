@@ -26,13 +26,15 @@
 | Subtask | Status | Validation | Commit |
 |---|---|---|---|
 | 1. Proposal validation and lifecycle model | COMPLETE | Focused governance unit tests: 31 passed; Ruff check/format and `git diff --check` passed | pending commit |
-| 2. Durable governance storage | NOT STARTED | — | — |
+| 2. Durable governance storage | COMPLETE | Isolated PostgreSQL integration and schema tests: 10 passed; migration `0005` applied by the test fixture; Ruff check/format and `git diff --check` passed | pending commit |
 | 3. Approval submission and reconciliation | NOT STARTED | — | — |
 | 4. Approval state machine | NOT STARTED | — | — |
 | 5. Stale checks and safe apply | NOT STARTED | — | — |
 | 6. Integration and hardening | NOT STARTED | — | — |
 
 Subtask 1 adds an immutable approval request payload matching the documented required fields, with optional evidence and expiry. It validates values and JSON compatibility and exposes a deterministic SHA-256 hash for detecting payload changes under a stable proposal ID. The lifecycle model encodes proposal, approval, apply, stale, lapse, and reconciliation-required states; same-state observations are idempotent and terminal outcomes cannot transition onward. Focused tests cover accepted/rejected fields, hash stability, valid transitions, invalid transitions, and terminal states. Simulator OpenAPI JSON has not yet been queried from a running isolated server; endpoint shapes were checked against `docs/SIMULATOR.md` and route/handler source.
+
+Subtask 2 adds `governance_proposals` in migration `0005_governance_proposals`, storing immutable request payload/hash, workflow/base version, local/remote status, approval ID, and reconciliation outcome. `DatabaseStore` can create/get/list/update proposals. Proposal creation can share a transaction with its outbox operation; duplicate identical IDs are idempotent, while a different payload under the same ID fails. PostgreSQL tests cover persistence, outbox linkage, duplicate conflict, invalid status constraints, and rollback of proposal plus intent. The focused run used an isolated temporary PostgreSQL 18 cluster on localhost; no configured development database was touched.
 
 ## Chunk 4 subtask progress
 
