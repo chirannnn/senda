@@ -192,7 +192,26 @@ class AuditRecord(Base):
 
     __tablename__ = "audit_records"
     __table_args__ = (
-        Index("ix_audit_records_workflow_time", "workflow_id", "occurred_at"),
+        Index(
+            "ix_audit_records_workflow_time_id",
+            "workflow_id",
+            "occurred_at",
+            "id",
+        ),
+        Index(
+            "ix_audit_records_workflow_actor_time_id",
+            "workflow_id",
+            "actor",
+            "occurred_at",
+            "id",
+        ),
+        Index(
+            "ix_audit_records_workflow_action_time_id",
+            "workflow_id",
+            "action",
+            "occurred_at",
+            "id",
+        ),
         Index("ix_audit_records_action_time", "action", "occurred_at"),
     )
 

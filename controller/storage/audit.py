@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from controller.storage.models import AuditRecord
@@ -23,6 +24,63 @@ class AuditEntry:
     resource_type: str | None = None
     resource_id: str | None = None
     evidence: dict[str, object] = field(default_factory=dict)
+
+
+@dataclass(frozen=True, slots=True)
+class AuditCursor:
+    """Stable keyset position for audit rows ordered by time and UUID."""
+
+    occurred_at: datetime
+    record_id: UUID
+
+    def __post_init__(self) -> None:
+        if self.occurred_at.tzinfo is None:
+            raise ValueError("audit cursor timestamp must include a timezone")
+
+
+@dataclass(frozen=True, slots=True)
+class AuditQuery:
+    """Bounded read filters for workflow, actor, time, config and outcome."""
+
+    workflow_id: str | None = None
+    actor: str | None = None
+    action: str | None = None
+    resource_type: str | None = None
+    resource_id: str | None = None
+    config_version: int | None = None
+    approval_id: str | None = None
+    outcome: str | None = None
+    start_at: datetime | None = None
+    end_at: datetime | None = None
+    page_size: int = 100
+    after: AuditCursor | None = None
+
+    def __post_init__(self) -> None:
+        if isinstance(self.page_size, bool) or not 1 <= self.page_size <= 500:
+            raise ValueError("audit page size must be between 1 and 500")
+        if self.config_version is not None and (
+            isinstance(self.config_version, bool)
+            or not isinstance(self.config_version, int)
+            or self.config_version < 0
+        ):
+            raise ValueError("config version must be a nonnegative integer")
+        for value in (self.start_at, self.end_at):
+            if value is not None and value.tzinfo is None:
+                raise ValueError("audit timestamps must include a timezone")
+        if (
+            self.start_at is not None
+            and self.end_at is not None
+            and self.end_at <= self.start_at
+        ):
+            raise ValueError("audit end timestamp must follow start timestamp")
+
+
+@dataclass(frozen=True, slots=True)
+class AuditPage:
+    """One ordered page and an optional continuation cursor."""
+
+    records: tuple[AuditRecord, ...]
+    next_cursor: AuditCursor | None
 
 
 class AuditLog:
@@ -63,3 +121,60 @@ class AuditLog:
                 .order_by(AuditRecord.occurred_at, AuditRecord.id)
             )
             return list(result)
+
+    async def query(self, query: AuditQuery) -> AuditPage:
+        """Return an ordered, read-only page matching the supplied filters."""
+        statement = select(AuditRecord)
+        conditions = []
+        if query.workflow_id is not None:
+            conditions.append(AuditRecord.workflow_id == query.workflow_id)
+        if query.actor is not None:
+            conditions.append(AuditRecord.actor == query.actor)
+        if query.action is not None:
+            conditions.append(AuditRecord.action == query.action)
+        if query.resource_type is not None:
+            conditions.append(AuditRecord.resource_type == query.resource_type)
+        if query.resource_id is not None:
+            conditions.append(AuditRecord.resource_id == query.resource_id)
+        if query.config_version is not None:
+            conditions.append(
+                AuditRecord.evidence["config_version"].as_integer()
+                == query.config_version
+            )
+        if query.approval_id is not None:
+            conditions.append(
+                AuditRecord.evidence["approval_id"].as_string() == query.approval_id
+            )
+        if query.outcome is not None:
+            conditions.append(
+                AuditRecord.evidence["outcome"].as_string() == query.outcome
+            )
+        if query.start_at is not None:
+            conditions.append(AuditRecord.occurred_at >= query.start_at)
+        if query.end_at is not None:
+            conditions.append(AuditRecord.occurred_at < query.end_at)
+        if query.after is not None:
+            conditions.append(
+                or_(
+                    AuditRecord.occurred_at > query.after.occurred_at,
+                    and_(
+                        AuditRecord.occurred_at == query.after.occurred_at,
+                        AuditRecord.id > query.after.record_id,
+                    ),
+                )
+            )
+        if conditions:
+            statement = statement.where(*conditions)
+        statement = statement.order_by(AuditRecord.occurred_at, AuditRecord.id).limit(
+            query.page_size + 1
+        )
+        async with self._store.transaction() as session:
+            rows = list((await session.scalars(statement)).all())
+        has_more = len(rows) > query.page_size
+        records = tuple(rows[: query.page_size])
+        cursor = (
+            AuditCursor(records[-1].occurred_at, records[-1].id)
+            if has_more and records
+            else None
+        )
+        return AuditPage(records, cursor)
