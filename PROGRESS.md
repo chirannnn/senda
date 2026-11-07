@@ -1,10 +1,10 @@
 # Progress Tracking — Outcome-First Agent Loop
 
-## Overall status: COMPLETE — CHUNK 4
+## Overall status: IN PROGRESS — CHUNK 5
 
-**Current phase:** Chunk 4 history, KPI facts and audit queries complete
-**Current chunk:** 4 — History, KPI facts, and audit query
-**Current next action:** Await review; Chunk 5 — Governance lifecycle has not started.
+**Current phase:** Chunk 5 governance lifecycle
+**Current chunk:** 5 — Governance lifecycle
+**Current next action:** Subtask 1 complete; continue with durable governance storage.
 
 ## Implementation progress
 
@@ -14,12 +14,25 @@
 | 2 | Durable schema and audit | COMPLETE | `aab9708`, `2443889`, `31af0ea`, `a3d7a6b`, `e88ed27` |
 | 3 | Simulator chunk ingestion | COMPLETE | `d921490`, `b6b88f6`, `6bdce40`, `f975203`, `09bf0b6`, `adf5b54` |
 | 4 | History, KPI facts, audit query | COMPLETE | `79caf3d`, `bf4e93b`, `237d6b2`, `f640e9b`, `bd1f94b`, `b87a39b` |
-| 5 | Governance lifecycle | NOT STARTED | — |
+| 5 | Governance lifecycle | IN PROGRESS | subtask 1: proposal validation and lifecycle model |
 | 6 | Statistical comparison | NOT STARTED | — |
 | 7 | Public incident workflow | NOT STARTED | — |
 | 8 | Crash recovery demonstration | NOT STARTED | — |
 | 9 | Load and observability | NOT STARTED | — |
 | 10 | Submission and final grading | NOT STARTED | — |
+
+## Chunk 5 subtask progress
+
+| Subtask | Status | Validation | Commit |
+|---|---|---|---|
+| 1. Proposal validation and lifecycle model | COMPLETE | Focused governance unit tests: 31 passed; Ruff check/format and `git diff --check` passed | pending commit |
+| 2. Durable governance storage | NOT STARTED | — | — |
+| 3. Approval submission and reconciliation | NOT STARTED | — | — |
+| 4. Approval state machine | NOT STARTED | — | — |
+| 5. Stale checks and safe apply | NOT STARTED | — | — |
+| 6. Integration and hardening | NOT STARTED | — | — |
+
+Subtask 1 adds an immutable approval request payload matching the documented required fields, with optional evidence and expiry. It validates values and JSON compatibility and exposes a deterministic SHA-256 hash for detecting payload changes under a stable proposal ID. The lifecycle model encodes proposal, approval, apply, stale, lapse, and reconciliation-required states; same-state observations are idempotent and terminal outcomes cannot transition onward. Focused tests cover accepted/rejected fields, hash stability, valid transitions, invalid transitions, and terminal states. Simulator OpenAPI JSON has not yet been queried from a running isolated server; endpoint shapes were checked against `docs/SIMULATOR.md` and route/handler source.
 
 ## Chunk 4 subtask progress
 
