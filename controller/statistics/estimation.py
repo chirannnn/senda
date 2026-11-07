@@ -39,7 +39,7 @@ class BootstrapResult:
     estimate: float
     lower: float
     upper: float
-    p_greater_zero: float
+    p_not_greater_than_threshold: float
     replicates: int
 
 
@@ -66,6 +66,7 @@ def estimate_rate_difference(
     seed_key: str,
     replicates: int = 10_000,
     alpha: float = 0.05,
+    evidence_threshold: float = 0.0,
 ) -> BootstrapResult:
     """Estimate treatment-control using independent person-cluster resampling.
 
@@ -108,8 +109,10 @@ def estimate_rate_difference(
     differences.sort()
     lower = _quantile(differences, alpha / 2)
     upper = _quantile(differences, 1 - alpha / 2)
-    p_greater = (sum(value <= 0 for value in differences) + 1) / (replicates + 1)
-    return BootstrapResult(observed, lower, upper, p_greater, replicates)
+    p_not_greater = (sum(value <= evidence_threshold for value in differences) + 1) / (
+        replicates + 1
+    )
+    return BootstrapResult(observed, lower, upper, p_not_greater, replicates)
 
 
 def holm_adjust(p_values: Mapping[str, float]) -> dict[str, float]:
@@ -158,7 +161,7 @@ def required_sample_sizes(
     )
     if any(not math.isfinite(value) for value in values):
         raise ValueError("sample-size inputs must be finite")
-    if not 0 < baseline_rate < 1 or not 0 < mde <= 1 - baseline_rate:
+    if not 0 <= baseline_rate < 1 or not 0 < mde <= 1 - baseline_rate:
         raise ValueError("baseline and MDE must define a valid second-arm rate")
     if allocation_ratio <= 0 or mean_cluster_size < 1:
         raise ValueError("allocation ratio and mean cluster size must be positive")

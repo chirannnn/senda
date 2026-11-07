@@ -4,7 +4,7 @@
 
 **Current phase:** Chunk 6 statistical comparison
 **Current chunk:** 6 — Statistical comparison
-**Current next action:** Complete Chunk 6 subtask 2: observed variant evidence and deterministic experiment evaluation.
+**Current next action:** Complete Chunk 6 subtask 3: durable decisions, idempotency and PostgreSQL recovery tests.
 
 ## Implementation progress
 
@@ -15,7 +15,7 @@
 | 3 | Simulator chunk ingestion | COMPLETE | `d921490`, `b6b88f6`, `6bdce40`, `f975203`, `09bf0b6`, `adf5b54` |
 | 4 | History, KPI facts, audit query | COMPLETE | `79caf3d`, `bf4e93b`, `237d6b2`, `f640e9b`, `bd1f94b`, `b87a39b` |
 | 5 | Governance lifecycle | COMPLETE | `29d7e81`, `d04a0bf`, `40aca99`, `feb3c77`, `50fbc35`, this subtask's final hardening commit |
-| 6 | Statistical comparison | NOT STARTED | — |
+| 6 | Statistical comparison | IN PROGRESS | — |
 | 7 | Public incident workflow | NOT STARTED | — |
 | 8 | Crash recovery demonstration | NOT STARTED | — |
 | 9 | Load and observability | NOT STARTED | — |
@@ -25,8 +25,8 @@
 
 | Subtask | Status | Validation | Commit |
 |---|---|---|---|
-| 1. Statistical primitives | COMPLETE | 13 unit tests passed; Ruff, formatting, compileall and git diff --check passed | pending |
-| 2. Variant evidence and evaluation | NOT STARTED | — | — |
+| 1. Statistical primitives | COMPLETE | 13 unit tests passed; Ruff, formatting, compileall and git diff --check passed | 7a3d228 |
+| 2. Variant evidence and evaluation | COMPLETE | 17 focused unit tests passed; Ruff, formatting, compileall and git diff --check passed | pending |
 | 3. Durable decisions and recovery | NOT STARTED | — | — |
 | 4. Governed proposal integration | NOT STARTED | — | — |
 | 5. Integration and acceptance | NOT STARTED | — | — |

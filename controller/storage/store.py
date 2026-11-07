@@ -532,6 +532,58 @@ class DatabaseStore:
             result = await session.execute(statement)
             return [(row[0], row[1], bool(row[2])) for row in result]
 
+    async def list_experiment_facts(
+        self,
+        *,
+        workflow_id: str,
+        config_version: int,
+        cohort_id: str,
+        dimension: str,
+        arm_values: tuple[str, ...],
+        start_at: datetime,
+        end_at: datetime,
+        cutoff_event_id: int,
+        after_event_id: int = 0,
+        limit: int = 1000,
+    ) -> list[KpiFact]:
+        """Read a bounded page of valid observed calls for one frozen experiment."""
+        if not workflow_id or not cohort_id or not dimension or not arm_values:
+            raise ValueError("experiment query identity and arms are required")
+        if (
+            isinstance(config_version, bool)
+            or config_version < 0
+            or isinstance(cutoff_event_id, bool)
+            or cutoff_event_id < 0
+            or isinstance(after_event_id, bool)
+            or after_event_id < 0
+            or isinstance(limit, bool)
+            or limit < 1
+        ):
+            raise ValueError("experiment query versions, cursor and limit are invalid")
+        if start_at.tzinfo is None or end_at.tzinfo is None or end_at <= start_at:
+            raise ValueError("experiment window must be aware and ordered")
+        statement = (
+            select(KpiFact)
+            .where(
+                KpiFact.workflow_id == workflow_id,
+                KpiFact.config_version == config_version,
+                KpiFact.observed_cohort_id == cohort_id,
+                KpiFact.event_type == "call",
+                KpiFact.quality == "valid",
+                KpiFact.person_id.is_not(None),
+                KpiFact.occurred_at >= start_at,
+                KpiFact.occurred_at < end_at,
+                KpiFact.source_event_id <= cutoff_event_id,
+                KpiFact.source_event_id > after_event_id,
+                cast(KpiFact.variant, JSONB)[dimension].astext.in_(arm_values),
+            )
+            .order_by(KpiFact.source_event_id)
+            .limit(limit)
+        )
+        self._ensure_open()
+        async with self._sessions() as session:
+            return list((await session.scalars(statement)).all())
+
     async def create_run(
         self, session: AsyncSession, details: dict[str, object] | None = None
     ) -> UUID:

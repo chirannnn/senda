@@ -95,7 +95,6 @@ def test_power_calculation_requires_all_assumptions_and_accounts_for_clusters():
 @pytest.mark.parametrize(
     "overrides",
     [
-        {"baseline_rate": 0},
         {"mde": 0},
         {"allocation_ratio": 0},
         {"intracluster_correlation": 2},
@@ -119,3 +118,19 @@ def test_invalid_power_inputs_are_rejected(overrides):
     parameters.update(overrides)
     with pytest.raises(ValueError):
         required_sample_sizes(**parameters)
+
+
+def test_zero_baseline_rate_is_a_valid_explicit_power_input():
+    assert (
+        required_sample_sizes(
+            baseline_rate=0,
+            mde=0.05,
+            allocation_ratio=1,
+            intracluster_correlation=0,
+            mean_cluster_size=1,
+            alpha=0.05,
+            power=0.8,
+            comparisons=1,
+        )[0]
+        > 0
+    )
