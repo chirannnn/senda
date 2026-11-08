@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import math
+import time
 from datetime import datetime
 from typing import Any
 
 from controller.storage.models import SimulatorEvent
 from controller.storage.store import DatabaseStore, KpiFactRecord
+from controller.telemetry import RuntimeTelemetry
 
 PROCESSOR_NAME = "kpi-facts-v1"
 _CONCLUDED_DISPOSITIONS = {"concluded_interested", "concluded_not_interested"}
@@ -23,11 +25,18 @@ _KNOWN_TYPES = {
 class KpiFactProcessor:
     """Project bounded pages of immutable raw events into unique fact rows."""
 
-    def __init__(self, store: DatabaseStore, *, page_size: int = 1000) -> None:
+    def __init__(
+        self,
+        store: DatabaseStore,
+        *,
+        page_size: int = 1000,
+        telemetry: RuntimeTelemetry | None = None,
+    ) -> None:
         if page_size < 1:
             raise ValueError("page size must be positive")
         self._store = store
         self._page_size = page_size
+        self._telemetry = telemetry
 
     async def process_available(self) -> tuple[int, int]:
         """Return (source events scanned, facts newly inserted), safe across restarts."""
@@ -35,13 +44,23 @@ class KpiFactProcessor:
         scanned = 0
         inserted = 0
         while True:
-            page = await self._store.list_events_after(cursor, limit=self._page_size)
+            page = await self._store.list_events_after(
+                cursor, limit=self._page_size, telemetry=self._telemetry
+            )
             if not page:
                 return scanned, inserted
+            projection_started = time.perf_counter()
             facts = [derive_fact(event) for event in page]
+            if self._telemetry is not None:
+                self._telemetry.observe(
+                    "fact_projection_seconds", time.perf_counter() - projection_started
+                )
             next_cursor = page[-1].event_id
             inserted += await self._store.commit_kpi_page(
-                PROCESSOR_NAME, facts, next_cursor
+                PROCESSOR_NAME,
+                facts,
+                next_cursor,
+                telemetry=self._telemetry,
             )
             scanned += len(page)
             cursor = next_cursor

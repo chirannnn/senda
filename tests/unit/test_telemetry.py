@@ -2,6 +2,7 @@ import sys
 
 import pytest
 
+from controller.storage import store as store_module
 from controller.telemetry import RuntimeTelemetry, process_memory_bytes
 
 
@@ -87,3 +88,23 @@ def test_process_memory_probe_is_safe():
         assert value is not None and value > 0
     else:
         assert value is None or value > 0
+
+
+def test_storage_stage_timer_records_elapsed_time_and_leaves_disabled_absent(
+    monkeypatch,
+):
+    telemetry = RuntimeTelemetry()
+    clock = iter((10.0, 12.5))
+    monkeypatch.setattr(store_module, "perf_counter", lambda: next(clock))
+
+    with store_module._observe_elapsed(telemetry, "fact_insert_execute_seconds"):
+        pass
+
+    histogram = telemetry.export()["histograms"]["fact_insert_execute_seconds"]
+    assert histogram["count"] == 1
+    assert histogram["sum_seconds"] == 2.5
+    assert histogram["max_seconds"] == 2.5
+
+    with store_module._observe_elapsed(None, "unavailable_stage_seconds"):
+        pass
+    assert "unavailable_stage_seconds" not in telemetry.export()["histograms"]

@@ -12,6 +12,7 @@ from controller.analytics.facts import PROCESSOR_NAME, KpiFactProcessor, derive_
 from controller.analytics.kpis import KpiCalculator
 from controller.storage.models import KpiFact, SimulatorEvent
 from controller.storage.store import DatabaseStore, EventRecord, KpiFactRecord
+from controller.telemetry import RuntimeTelemetry
 
 
 @pytest.mark.anyio
@@ -90,6 +91,7 @@ async def test_kpi_page_batches_workflow_upserts_and_counts_without_returning(
 @pytest.mark.anyio
 async def test_fact_derivation_is_idempotent_and_survives_store_reopen(postgres_store):
     store = postgres_store
+    telemetry = RuntimeTelemetry()
     source_events = [
         EventRecord(
             940001,
@@ -143,10 +145,23 @@ async def test_fact_derivation_is_idempotent_and_survives_store_reopen(postgres_
     async with store.transaction() as session:
         await store.insert_events(session, source_events)
 
-    processor = KpiFactProcessor(store, page_size=2)
+    processor = KpiFactProcessor(store, page_size=2, telemetry=telemetry)
     assert await processor.process_available() == (3, 3)
     assert await processor.process_available() == (0, 0)
     assert await store.get_analytics_cursor(PROCESSOR_NAME) == 940009
+    metrics = telemetry.export()["histograms"]
+    assert metrics["fact_event_page_read_seconds"]["count"] == 4
+    assert metrics["fact_projection_seconds"]["count"] == 2
+    for metric_name, expected_count in (
+        ("fact_workflow_reference_upsert_seconds", 2),
+        ("fact_page_payload_build_seconds", 2),
+        ("fact_insert_execute_seconds", 2),
+        ("fact_cursor_update_seconds", 2),
+        ("fact_page_commit_seconds", 2),
+    ):
+        assert metrics[metric_name]["count"] == expected_count
+        assert metrics[metric_name]["sum_seconds"] >= 0
+        assert metrics[metric_name]["max_seconds"] >= 0
 
     url = os.environ["CONTROLLER_TEST_DATABASE_URL"]
     await store.close()

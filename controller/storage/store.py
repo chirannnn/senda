@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import os
-from collections.abc import AsyncIterable, AsyncIterator, Mapping
-from contextlib import asynccontextmanager
+from collections.abc import AsyncIterable, AsyncIterator, Iterator, Mapping
+from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+from time import perf_counter
 from typing import Self
 from uuid import UUID
 
@@ -40,6 +41,7 @@ from controller.storage.models import (
     VersionedCohortDefinition,
     WorkflowReference,
 )
+from controller.telemetry import RuntimeTelemetry
 
 
 @dataclass(frozen=True, slots=True)
@@ -175,14 +177,31 @@ class DatabaseStore:
         command.upgrade(config, "head")
 
     @asynccontextmanager
-    async def transaction(self) -> AsyncIterator[AsyncSession]:
+    async def transaction(
+        self,
+        *,
+        telemetry: RuntimeTelemetry | None = None,
+        commit_metric: str | None = None,
+    ) -> AsyncIterator[AsyncSession]:
         """Commit on normal exit and roll back every write on exceptional exit."""
         self._ensure_open()
-        async with self._sessions() as session, session.begin():
-            yield session
+        async with self._sessions() as session:
+            transaction = await session.begin()
+            try:
+                yield session
+            except BaseException:
+                await transaction.rollback()
+                raise
+            else:
+                with _observe_elapsed(telemetry, commit_metric):
+                    await transaction.commit()
 
     async def insert_events(
-        self, session: AsyncSession, events: list[EventRecord]
+        self,
+        session: AsyncSession,
+        events: list[EventRecord],
+        *,
+        telemetry: RuntimeTelemetry | None = None,
     ) -> tuple[int, ...]:
         """Insert unique events and return IDs inserted by this transaction only.
 
@@ -221,19 +240,21 @@ class DatabaseStore:
             .on_conflict_do_nothing(index_elements=[SimulatorEvent.event_id])
             .returning(SimulatorEvent.event_id)
         )
-        inserted_ids = tuple((await session.execute(statement)).scalars())
+        with _observe_elapsed(telemetry, "event_insert_execute_seconds"):
+            inserted_ids = tuple((await session.execute(statement)).scalars())
         inserted_set = set(inserted_ids)
         event_ids = {event.event_id for event in events}
         conflicting_ids = event_ids - inserted_set
         persisted_by_id = {}
         if conflicting_ids:
-            persisted = (
-                await session.execute(
-                    select(SimulatorEvent).where(
-                        SimulatorEvent.event_id.in_(conflicting_ids)
+            with _observe_elapsed(telemetry, "event_conflict_lookup_seconds"):
+                persisted = (
+                    await session.execute(
+                        select(SimulatorEvent).where(
+                            SimulatorEvent.event_id.in_(conflicting_ids)
+                        )
                     )
-                )
-            ).scalars()
+                ).scalars()
             persisted_by_id = {record.event_id: record for record in persisted}
         for event in events:
             if event.event_id in inserted_set:
@@ -266,7 +287,12 @@ class DatabaseStore:
             return await session.scalar(select(func.max(SimulatorEvent.event_id)))
 
     async def list_events_after(
-        self, event_id: int, *, limit: int, workflow_id: str | None = None
+        self,
+        event_id: int,
+        *,
+        limit: int,
+        workflow_id: str | None = None,
+        telemetry: RuntimeTelemetry | None = None,
     ) -> list[SimulatorEvent]:
         """Read a bounded, event-ID ordered page for restartable derivation."""
         self._ensure_open()
@@ -279,7 +305,8 @@ class DatabaseStore:
             )
         statement = statement.order_by(SimulatorEvent.event_id).limit(limit)
         async with self._sessions() as session:
-            return list((await session.scalars(statement)).all())
+            with _observe_elapsed(telemetry, "fact_event_page_read_seconds"):
+                return list((await session.scalars(statement)).all())
 
     async def list_workflow_ids(self) -> list[str]:
         """List workflow IDs observed in persisted event payloads."""
@@ -312,6 +339,8 @@ class DatabaseStore:
         processor: str,
         facts: list[KpiFactRecord],
         scanned_through_event_id: int,
+        *,
+        telemetry: RuntimeTelemetry | None = None,
     ) -> int:
         """Persist a fact page and its scan cursor atomically and idempotently."""
         if scanned_through_event_id < 0 or any(
@@ -319,55 +348,65 @@ class DatabaseStore:
         ):
             raise ValueError("analytics cursor cannot precede a fact in its page")
         inserted_count = 0
-        async with self.transaction() as session:
+        async with self.transaction(
+            telemetry=telemetry, commit_metric="fact_page_commit_seconds"
+        ) as session:
             workflow_ids = sorted(
                 {fact.workflow_id for fact in facts if fact.workflow_id}
             )
             if workflow_ids:
-                await session.execute(
-                    postgresql_insert(WorkflowReference)
-                    .values(
-                        [{"workflow_id": workflow_id} for workflow_id in workflow_ids]
+                with _observe_elapsed(
+                    telemetry, "fact_workflow_reference_upsert_seconds"
+                ):
+                    await session.execute(
+                        postgresql_insert(WorkflowReference)
+                        .values(
+                            [
+                                {"workflow_id": workflow_id}
+                                for workflow_id in workflow_ids
+                            ]
+                        )
+                        .on_conflict_do_update(
+                            index_elements=[WorkflowReference.workflow_id],
+                            set_={"updated_at": func.now()},
+                        )
                     )
-                    .on_conflict_do_update(
-                        index_elements=[WorkflowReference.workflow_id],
-                        set_={"updated_at": func.now()},
-                    )
-                )
             if facts:
-                rows = [
-                    {
-                        "source_event_id": fact.source_event_id,
-                        "source_chunk": fact.source_chunk,
-                        "source_kind": fact.source_kind,
-                        "workflow_id": fact.workflow_id,
-                        "event_type": fact.event_type,
-                        "occurred_at": fact.occurred_at,
-                        "campaign_id": fact.campaign_id,
-                        "lead_id": fact.lead_id,
-                        "person_id": fact.person_id,
-                        "config_version": fact.config_version,
-                        "observed_cohort_id": fact.observed_cohort_id,
-                        "variant": fact.variant,
-                        "features": fact.features,
-                        "quality": fact.quality,
-                        "quality_detail": fact.quality_detail,
-                        "dials": fact.dials,
-                        "connected": fact.connected,
-                        "concluded": fact.concluded,
-                        "uploaded": fact.uploaded,
-                        "qa_hallucination": fact.qa_hallucination,
-                        "qa_flow_adherence": fact.qa_flow_adherence,
-                        "qa_quality": fact.qa_quality,
-                    }
-                    for fact in facts
-                ]
+                with _observe_elapsed(telemetry, "fact_page_payload_build_seconds"):
+                    rows = [
+                        {
+                            "source_event_id": fact.source_event_id,
+                            "source_chunk": fact.source_chunk,
+                            "source_kind": fact.source_kind,
+                            "workflow_id": fact.workflow_id,
+                            "event_type": fact.event_type,
+                            "occurred_at": fact.occurred_at,
+                            "campaign_id": fact.campaign_id,
+                            "lead_id": fact.lead_id,
+                            "person_id": fact.person_id,
+                            "config_version": fact.config_version,
+                            "observed_cohort_id": fact.observed_cohort_id,
+                            "variant": fact.variant,
+                            "features": fact.features,
+                            "quality": fact.quality,
+                            "quality_detail": fact.quality_detail,
+                            "dials": fact.dials,
+                            "connected": fact.connected,
+                            "concluded": fact.concluded,
+                            "uploaded": fact.uploaded,
+                            "qa_hallucination": fact.qa_hallucination,
+                            "qa_flow_adherence": fact.qa_flow_adherence,
+                            "qa_quality": fact.qa_quality,
+                        }
+                        for fact in facts
+                    ]
                 statement = (
                     postgresql_insert(KpiFact)
                     .values(rows)
                     .on_conflict_do_nothing(index_elements=[KpiFact.source_event_id])
                 )
-                result = await session.execute(statement)
+                with _observe_elapsed(telemetry, "fact_insert_execute_seconds"):
+                    result = await session.execute(statement)
                 if result.rowcount is None or result.rowcount < 0:
                     raise RuntimeError(
                         "database did not report the number of inserted KPI facts"
@@ -387,17 +426,18 @@ class DatabaseStore:
                     where=table.event_id <= scanned_through_event_id,
                 )
             )
-            updated_cursor = await session.scalar(
-                cursor_statement.returning(table.event_id)
-            )
-            if updated_cursor is None:
-                current = await session.scalar(
-                    select(table.event_id).where(table.processor == processor)
+            with _observe_elapsed(telemetry, "fact_cursor_update_seconds"):
+                updated_cursor = await session.scalar(
+                    cursor_statement.returning(table.event_id)
                 )
-                raise CheckpointRegressionError(
-                    f"analytics cursor {processor!r} cannot move from {current} "
-                    f"to {scanned_through_event_id}"
-                )
+                if updated_cursor is None:
+                    current = await session.scalar(
+                        select(table.event_id).where(table.processor == processor)
+                    )
+                    raise CheckpointRegressionError(
+                        f"analytics cursor {processor!r} cannot move from {current} "
+                        f"to {scanned_through_event_id}"
+                    )
         return inserted_count
 
     async def save_cohort_definitions(
@@ -985,7 +1025,12 @@ class DatabaseStore:
         await session.execute(statement)
 
     async def advance_checkpoint(
-        self, session: AsyncSession, checkpoint_key: str, chunk_number: int
+        self,
+        session: AsyncSession,
+        checkpoint_key: str,
+        chunk_number: int,
+        *,
+        telemetry: RuntimeTelemetry | None = None,
     ) -> int:
         """Advance to an API-ordered chunk descriptor inside the caller's transaction."""
         self.require_transaction(session)
@@ -1003,7 +1048,8 @@ class DatabaseStore:
             )
             .returning(table.chunk_number)
         )
-        result = await session.execute(statement)
+        with _observe_elapsed(telemetry, "event_checkpoint_update_seconds"):
+            result = await session.execute(statement)
         advanced_to = result.scalar_one_or_none()
         if advanced_to is None:
             current = await session.scalar(
@@ -1193,6 +1239,8 @@ class DatabaseStore:
         checkpoint_key: str,
         chunk_number: int,
         events: list[EventRecord],
+        *,
+        telemetry: RuntimeTelemetry | None = None,
     ) -> tuple[int, ...]:
         """Persist a chunk's raw rows and descriptor checkpoint atomically.
 
@@ -1201,9 +1249,15 @@ class DatabaseStore:
         """
         if any(event.chunk_number != chunk_number for event in events):
             raise ValueError("every event must match the checkpoint chunk number")
-        async with self.transaction() as session:
-            inserted_ids = await self.insert_events(session, events)
-            await self.advance_checkpoint(session, checkpoint_key, chunk_number)
+        async with self.transaction(
+            telemetry=telemetry, commit_metric="event_chunk_commit_seconds"
+        ) as session:
+            inserted_ids = await self.insert_events(
+                session, events, telemetry=telemetry
+            )
+            await self.advance_checkpoint(
+                session, checkpoint_key, chunk_number, telemetry=telemetry
+            )
             return inserted_ids
 
     async def commit_chunk_stream(
@@ -1213,6 +1267,7 @@ class DatabaseStore:
         events: AsyncIterable[EventRecord],
         *,
         batch_size: int = 500,
+        telemetry: RuntimeTelemetry | None = None,
     ) -> int:
         """Insert a streamed chunk in bounded batches with one atomic checkpoint.
 
@@ -1223,7 +1278,9 @@ class DatabaseStore:
         if batch_size < 1:
             raise ValueError("batch size must be positive")
         inserted_count = 0
-        async with self.transaction() as session:
+        async with self.transaction(
+            telemetry=telemetry, commit_metric="event_chunk_commit_seconds"
+        ) as session:
             batch: list[EventRecord] = []
             async for event in events:
                 if event.chunk_number != chunk_number:
@@ -1232,11 +1289,17 @@ class DatabaseStore:
                     )
                 batch.append(event)
                 if len(batch) >= batch_size:
-                    inserted_count += len(await self.insert_events(session, batch))
+                    inserted_count += len(
+                        await self.insert_events(session, batch, telemetry=telemetry)
+                    )
                     batch.clear()
             if batch:
-                inserted_count += len(await self.insert_events(session, batch))
-            await self.advance_checkpoint(session, checkpoint_key, chunk_number)
+                inserted_count += len(
+                    await self.insert_events(session, batch, telemetry=telemetry)
+                )
+            await self.advance_checkpoint(
+                session, checkpoint_key, chunk_number, telemetry=telemetry
+            )
         return inserted_count
 
     async def create_outbox_operation(
@@ -1483,3 +1546,18 @@ class DatabaseStore:
     def _ensure_open(self) -> None:
         if self._closed:
             raise RuntimeError("database store is closed")
+
+
+@contextmanager
+def _observe_elapsed(
+    telemetry: RuntimeTelemetry | None, metric_name: str | None
+) -> Iterator[None]:
+    """Record one bounded operation duration when runtime telemetry is enabled."""
+    if telemetry is None or metric_name is None:
+        yield
+        return
+    started = perf_counter()
+    try:
+        yield
+    finally:
+        telemetry.observe(metric_name, perf_counter() - started)

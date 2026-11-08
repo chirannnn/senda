@@ -88,6 +88,7 @@ class EventIngestionService:
                 descriptor.chunk,
                 async_records(),
                 batch_size=batch_size,
+                telemetry=self._telemetry,
             )
             if self._telemetry is not None:
                 self._telemetry.observe(

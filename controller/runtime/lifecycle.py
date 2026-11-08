@@ -68,7 +68,9 @@ async def run_controller(
         if store is not None
         else None
     )
-    fact_processor = KpiFactProcessor(store) if store is not None else None
+    fact_processor = (
+        KpiFactProcessor(store, telemetry=metrics) if store is not None else None
+    )
     audit = AuditLog(store) if store is not None else None
     if store is not None and ingestion is not None:
         await ingestion.ingest_available_chunks(store)

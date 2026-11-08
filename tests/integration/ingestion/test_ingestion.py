@@ -92,6 +92,17 @@ async def test_history_and_live_chunks_persist_with_global_order_and_id_gaps(
     assert metrics["counters"]["events_inserted"] == 4
     assert metrics["latest"]["pending_chunks"] == 0
     assert metrics["api"]["GET /events/chunks/{chunk_number}"]["requests"] == 2
+    assert metrics["histograms"]["event_insert_execute_seconds"]["count"] == 4
+    assert metrics["histograms"]["event_checkpoint_update_seconds"]["count"] == 2
+    assert metrics["histograms"]["event_chunk_commit_seconds"]["count"] == 2
+    for metric_name in (
+        "event_insert_execute_seconds",
+        "event_checkpoint_update_seconds",
+        "event_chunk_commit_seconds",
+    ):
+        histogram = metrics["histograms"][metric_name]
+        assert histogram["sum_seconds"] >= 0
+        assert histogram["max_seconds"] >= 0
 
 
 @pytest.mark.anyio
