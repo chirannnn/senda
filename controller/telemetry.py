@@ -276,10 +276,20 @@ def process_memory_bytes() -> int | None:
 
             counters = _Counters()
             counters.cb = ctypes.sizeof(counters)
-            handle = ctypes.windll.kernel32.GetCurrentProcess()
-            ok = ctypes.windll.psapi.GetProcessMemoryInfo(
-                handle, ctypes.byref(counters), counters.cb
-            )
+            kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+            get_current_process = kernel32.GetCurrentProcess
+            get_current_process.argtypes = []
+            get_current_process.restype = wintypes.HANDLE
+            handle = get_current_process()
+            psapi = ctypes.WinDLL("psapi", use_last_error=True)
+            get_memory_info = psapi.GetProcessMemoryInfo
+            get_memory_info.argtypes = [
+                wintypes.HANDLE,
+                ctypes.POINTER(_Counters),
+                wintypes.DWORD,
+            ]
+            get_memory_info.restype = wintypes.BOOL
+            ok = get_memory_info(handle, ctypes.byref(counters), counters.cb)
             return int(counters.PeakWorkingSetSize) if ok else None
         except (AttributeError, OSError):
             return None

@@ -1,5 +1,8 @@
 from pathlib import Path
 
+import pytest
+
+from scripts import measure_load
 from scripts.measure_load import (
     LoadSamples,
     _cpu_seconds,
@@ -82,3 +85,34 @@ def test_public_state_allowlist_excludes_unrequested_fields():
             "hidden_truth": "must not be copied",
         }
     ) == {"sim_minute": 15, "finished": False}
+
+
+def test_windows_process_tree_finds_children_and_grandchildren():
+    assert measure_load._descendant_process_ids(
+        10,
+        {10: 1, 11: 10, 12: 10, 13: 11, 99: 1},
+    ) == {10, 11, 12, 13}
+
+
+def test_windows_metrics_sum_launcher_and_child_processes(monkeypatch):
+    monkeypatch.setattr(measure_load.sys, "platform", "win32")
+    monkeypatch.setattr(
+        measure_load, "_windows_process_tree_ids", lambda pid: {pid, pid + 1}
+    )
+    rss = {10: 4_000_000, 11: 90_000_000}
+    cpu = {10: 0.01, 11: 12.5}
+    monkeypatch.setattr(measure_load, "_windows_process_rss_bytes", rss.get)
+    monkeypatch.setattr(measure_load, "_windows_process_cpu_seconds", cpu.get)
+
+    assert measure_load.process_rss_bytes(10) == 94_000_000
+    assert measure_load.process_cpu_seconds(10) == pytest.approx(12.51)
+
+
+def test_windows_process_metrics_are_none_when_no_process_is_readable(monkeypatch):
+    monkeypatch.setattr(measure_load.sys, "platform", "win32")
+    monkeypatch.setattr(measure_load, "_windows_process_tree_ids", lambda pid: {pid})
+    monkeypatch.setattr(measure_load, "_windows_process_rss_bytes", lambda pid: None)
+    monkeypatch.setattr(measure_load, "_windows_process_cpu_seconds", lambda pid: None)
+
+    assert measure_load.process_rss_bytes(10) is None
+    assert measure_load.process_cpu_seconds(10) is None

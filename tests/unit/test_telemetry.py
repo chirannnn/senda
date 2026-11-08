@@ -1,3 +1,5 @@
+import sys
+
 import pytest
 
 from controller.telemetry import RuntimeTelemetry, process_memory_bytes
@@ -81,4 +83,7 @@ def test_ingestion_rejects_impossible_counts_and_invalid_pending_gauge():
 
 def test_process_memory_probe_is_safe():
     value = process_memory_bytes()
-    assert value is None or value > 0
+    if sys.platform == "win32":
+        assert value is not None and value > 0
+    else:
+        assert value is None or value > 0

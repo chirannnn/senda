@@ -321,4 +321,15 @@ Known limits: these are synthetic development-host measurements, not `public_03_
 |---|---|---|---|
 | 1. Telemetry primitives | COMPLETE | 10 unit tests passed; Ruff check/format, compileall, and diff check passed | `a1dab4d` |
 | 2. Runtime, HTTP, and storage instrumentation | COMPLETE | 66 focused unit/PostgreSQL tests passed; Ruff check/format, compileall, Alembic check, and diff check passed | `fa5845a` |
-| 3. Reproducible load runner and operations guidance | COMPLETE | 66 focused unit/PostgreSQL tests passed; fresh-DB guard, bounded sampler, actual-process launch and report formulas covered; quality checks passed | this subtask commit |
+| 3. Reproducible load runner and operations guidance | COMPLETE | 66 focused unit/PostgreSQL tests passed; fresh-DB guard, bounded sampler, actual-process launch and report formulas covered; quality checks passed | `41e52a0` |
+| 4. Load measurement and public_03 run | COMPLETE | Public `public_03_load` reached 7,200/7,200 simulated minutes, 9,737,439 events and facts; 480 advances succeeded; SRE speed target failed. Windows launcher-only CPU/RSS metrics were found invalid and are disclosed in `reports/public_03_load_review.md` | pending |
+| 5. Final acceptance and documentation | COMPLETE | Full isolated PostgreSQL suite: 281 passed; Ruff check/format, compileall, Alembic upgrade/check, and diff check passed | pending |
+
+## Chunk 9 acceptance results
+
+- The permitted public `public_03_load` run completed at simulated minute 7,200 in 5,878.203 wall seconds. It persisted 9,737,439 events and 9,737,439 valid facts, with checkpoint 267 and analytics cursor 9,737,439. The API recorded zero request failures across 480 successful `/sim/advance` calls.
+- Measured throughput was 1,656.962 events/second; simulated ingestion lag was 181 minutes and latest-event persistence lag was 53.784 seconds. The SRE threshold of less than 600 wall seconds per simulated day **failed**: measured 1,175.641 seconds/day. The largest aggregate stage was fact processing (4,320.740 seconds; stage totals overlap).
+- PostgreSQL grew from 8,279,743 bytes to 9,441,285,823 bytes. The simulator ended with `finished=true`, `sim_minute=7200`, 268 chunks and `last_event_id=9737439`. No decisions were persisted and credits remained 400.
+- The original report, JSON log and sample file are retained unchanged as benchmark evidence. Review found its Windows RSS and CPU fields sampled only the Python launcher shim, producing invalid 4,546,560-byte RSS and zero CPU values. Whole-run process CPU and peak RSS are therefore unknown; read-only spot checks of the actual worker during execution were not a formal peak measurement. A separate review file describes this limitation. A Windows process-tree measurement fix is covered by focused tests and was not used to rerun the already-finished scenario.
+- The full test suite passed on the newly created isolated PostgreSQL database `formi_chunk9_final_20261108`: 281 passed. `ruff check .`, `ruff format --check .`, `python -B -m compileall -q controller tests scripts`, Alembic `upgrade head` and `check`, and `git diff --check` passed. Existing databases were not used for this verification.
+- Chunk 10 remains NOT STARTED. Nothing was pushed.

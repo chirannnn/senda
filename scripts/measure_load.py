@@ -498,38 +498,7 @@ def _fmt_bool(value: bool | None) -> str:
 
 def process_rss_bytes(pid: int) -> int | None:
     if sys.platform == "win32":
-        try:
-            from ctypes import wintypes
-
-            class _Counters(ctypes.Structure):
-                _fields_ = [
-                    ("cb", wintypes.DWORD),
-                    ("PageFaultCount", wintypes.DWORD),
-                    ("PeakWorkingSetSize", ctypes.c_size_t),
-                    ("WorkingSetSize", ctypes.c_size_t),
-                    ("QuotaPeakPagedPoolUsage", ctypes.c_size_t),
-                    ("QuotaPagedPoolUsage", ctypes.c_size_t),
-                    ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t),
-                    ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
-                    ("PagefileUsage", ctypes.c_size_t),
-                    ("PeakPagefileUsage", ctypes.c_size_t),
-                ]
-
-            handle = ctypes.windll.kernel32.OpenProcess(0x1000 | 0x0010, False, pid)
-            if not handle:
-                return None
-            try:
-                counters = _Counters()
-                counters.cb = ctypes.sizeof(counters)
-                if not ctypes.windll.psapi.GetProcessMemoryInfo(
-                    handle, ctypes.byref(counters), counters.cb
-                ):
-                    return None
-                return int(counters.WorkingSetSize)
-            finally:
-                ctypes.windll.kernel32.CloseHandle(handle)
-        except (AttributeError, OSError):
-            return None
+        return _sum_windows_process_metric(pid, _windows_process_rss_bytes)
     try:
         with open(f"/proc/{pid}/status", encoding="ascii") as status:
             for line in status:
@@ -542,36 +511,7 @@ def process_rss_bytes(pid: int) -> int | None:
 
 def process_cpu_seconds(pid: int) -> float | None:
     if sys.platform == "win32":
-        try:
-            from ctypes import wintypes
-
-            class _FileTime(ctypes.Structure):
-                _fields_ = [("low", wintypes.DWORD), ("high", wintypes.DWORD)]
-
-            handle = ctypes.windll.kernel32.OpenProcess(0x1000, False, pid)
-            if not handle:
-                return None
-            try:
-                creation, exit_time, kernel, user = (
-                    _FileTime(),
-                    _FileTime(),
-                    _FileTime(),
-                    _FileTime(),
-                )
-                if not ctypes.windll.kernel32.GetProcessTimes(
-                    handle,
-                    ctypes.byref(creation),
-                    ctypes.byref(exit_time),
-                    ctypes.byref(kernel),
-                    ctypes.byref(user),
-                ):
-                    return None
-                ticks = (kernel.high << 32 | kernel.low) + (user.high << 32 | user.low)
-                return ticks / 10_000_000
-            finally:
-                ctypes.windll.kernel32.CloseHandle(handle)
-        except (AttributeError, OSError):
-            return None
+        return _sum_windows_process_metric(pid, _windows_process_cpu_seconds)
     try:
         with open(f"/proc/{pid}/stat", encoding="ascii") as stat_file:
             raw = stat_file.read()
@@ -579,6 +519,175 @@ def process_cpu_seconds(pid: int) -> float | None:
         clock_ticks = os.sysconf("SC_CLK_TCK")
         return (int(fields[11]) + int(fields[12])) / clock_ticks
     except (OSError, ValueError, IndexError):
+        return None
+
+
+def _sum_windows_process_metric(root_pid: int, read_metric: Any) -> int | float | None:
+    values = [read_metric(pid) for pid in _windows_process_tree_ids(root_pid)]
+    measured = [value for value in values if isinstance(value, (int, float))]
+    return sum(measured) if measured else None
+
+
+def _descendant_process_ids(root_pid: int, parent_by_pid: dict[int, int]) -> set[int]:
+    descendants = {root_pid}
+    while True:
+        children = {
+            pid
+            for pid, parent_pid in parent_by_pid.items()
+            if parent_pid in descendants
+        }
+        new_descendants = children - descendants
+        if not new_descendants:
+            return descendants
+        descendants.update(new_descendants)
+
+
+def _windows_process_tree_ids(root_pid: int) -> set[int]:
+    """Include child processes used by Windows Python/venv launch shims."""
+    try:
+        from ctypes import wintypes
+
+        class _ProcessEntry(ctypes.Structure):
+            _fields_ = [
+                ("dwSize", wintypes.DWORD),
+                ("cntUsage", wintypes.DWORD),
+                ("th32ProcessID", wintypes.DWORD),
+                ("th32DefaultHeapID", ctypes.c_size_t),
+                ("th32ModuleID", wintypes.DWORD),
+                ("cntThreads", wintypes.DWORD),
+                ("th32ParentProcessID", wintypes.DWORD),
+                ("pcPriClassBase", wintypes.LONG),
+                ("dwFlags", wintypes.DWORD),
+                ("szExeFile", wintypes.WCHAR * 260),
+            ]
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        snapshot_fn = kernel32.CreateToolhelp32Snapshot
+        snapshot_fn.argtypes = [wintypes.DWORD, wintypes.DWORD]
+        snapshot_fn.restype = wintypes.HANDLE
+        snapshot = snapshot_fn(0x00000002, 0)
+        invalid_handle = ctypes.c_void_p(-1).value
+        if not snapshot or snapshot == invalid_handle:
+            return {root_pid}
+
+        first_fn = kernel32.Process32FirstW
+        first_fn.argtypes = [wintypes.HANDLE, ctypes.POINTER(_ProcessEntry)]
+        first_fn.restype = wintypes.BOOL
+        next_fn = kernel32.Process32NextW
+        next_fn.argtypes = [wintypes.HANDLE, ctypes.POINTER(_ProcessEntry)]
+        next_fn.restype = wintypes.BOOL
+        close_fn = kernel32.CloseHandle
+        close_fn.argtypes = [wintypes.HANDLE]
+        close_fn.restype = wintypes.BOOL
+
+        parent_by_pid: dict[int, int] = {}
+        entry = _ProcessEntry()
+        entry.dwSize = ctypes.sizeof(entry)
+        try:
+            if first_fn(snapshot, ctypes.byref(entry)):
+                while True:
+                    parent_by_pid[int(entry.th32ProcessID)] = int(
+                        entry.th32ParentProcessID
+                    )
+                    entry.dwSize = ctypes.sizeof(entry)
+                    if not next_fn(snapshot, ctypes.byref(entry)):
+                        break
+        finally:
+            close_fn(snapshot)
+        return _descendant_process_ids(root_pid, parent_by_pid)
+    except (AttributeError, OSError, TypeError, ValueError):
+        return {root_pid}
+
+
+def _windows_process_rss_bytes(pid: int) -> int | None:
+    try:
+        from ctypes import wintypes
+
+        class _Counters(ctypes.Structure):
+            _fields_ = [
+                ("cb", wintypes.DWORD),
+                ("PageFaultCount", wintypes.DWORD),
+                ("PeakWorkingSetSize", ctypes.c_size_t),
+                ("WorkingSetSize", ctypes.c_size_t),
+                ("QuotaPeakPagedPoolUsage", ctypes.c_size_t),
+                ("QuotaPagedPoolUsage", ctypes.c_size_t),
+                ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t),
+                ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
+                ("PagefileUsage", ctypes.c_size_t),
+                ("PeakPagefileUsage", ctypes.c_size_t),
+            ]
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        open_process = kernel32.OpenProcess
+        open_process.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+        open_process.restype = wintypes.HANDLE
+        handle = open_process(0x1000 | 0x0010, False, pid)
+        if not handle:
+            return None
+        close_handle = kernel32.CloseHandle
+        close_handle.argtypes = [wintypes.HANDLE]
+        close_handle.restype = wintypes.BOOL
+        psapi = ctypes.WinDLL("psapi", use_last_error=True)
+        get_info = psapi.GetProcessMemoryInfo
+        get_info.argtypes = [
+            wintypes.HANDLE,
+            ctypes.POINTER(_Counters),
+            wintypes.DWORD,
+        ]
+        get_info.restype = wintypes.BOOL
+        try:
+            counters = _Counters()
+            counters.cb = ctypes.sizeof(counters)
+            if get_info(handle, ctypes.byref(counters), counters.cb):
+                return int(counters.WorkingSetSize)
+            return None
+        finally:
+            close_handle(handle)
+    except (AttributeError, OSError, TypeError, ValueError):
+        return None
+
+
+def _windows_process_cpu_seconds(pid: int) -> float | None:
+    try:
+        from ctypes import wintypes
+
+        class _FileTime(ctypes.Structure):
+            _fields_ = [("low", wintypes.DWORD), ("high", wintypes.DWORD)]
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        open_process = kernel32.OpenProcess
+        open_process.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+        open_process.restype = wintypes.HANDLE
+        handle = open_process(0x1000, False, pid)
+        if not handle:
+            return None
+        close_handle = kernel32.CloseHandle
+        close_handle.argtypes = [wintypes.HANDLE]
+        close_handle.restype = wintypes.BOOL
+        get_times = kernel32.GetProcessTimes
+        get_times.argtypes = [
+            wintypes.HANDLE,
+            ctypes.POINTER(_FileTime),
+            ctypes.POINTER(_FileTime),
+            ctypes.POINTER(_FileTime),
+            ctypes.POINTER(_FileTime),
+        ]
+        get_times.restype = wintypes.BOOL
+        try:
+            creation, exit_time, kernel, user = (_FileTime() for _ in range(4))
+            if not get_times(
+                handle,
+                ctypes.byref(creation),
+                ctypes.byref(exit_time),
+                ctypes.byref(kernel),
+                ctypes.byref(user),
+            ):
+                return None
+            ticks = (kernel.high << 32 | kernel.low) + (user.high << 32 | user.low)
+            return ticks / 10_000_000
+        finally:
+            close_handle(handle)
+    except (AttributeError, OSError, TypeError, ValueError):
         return None
 
 
