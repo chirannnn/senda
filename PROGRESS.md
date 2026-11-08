@@ -273,3 +273,10 @@ Known limits: these are synthetic development-host measurements, not `public_03_
 - Added `tests/integration/test_real_crash_recovery.py`: a separate Python process executes the real `EventIngestionService` against the isolated PostgreSQL database and pauses after the first batch insert while the encompassing chunk transaction is still open. The parent hard-kills that process.
 - Verified after termination: event IDs 990001 and 990003 were absent and `crash-demo` had no checkpoint. Restart replay inserted both events, advanced checkpoint to chunk 900, and a second replay inserted zero duplicates.
 - Validation: focused real-process/PostgreSQL test passed; Ruff, formatting, compileall and `git diff --check` passed. This focused test uses a fake chunk byte source; the end-to-end demonstration with a real simulator and the Controller CLI remains for subtask 5.
+
+
+### Chunk 8 subtask 3 ? pending approval restart
+
+- Added a PostgreSQL restart test that submits and durably records a pending approval, closes the first store, opens a fresh store against the same database, reconciles pending then approved status, applies the exact approved config, closes/reopens again, and verifies the apply operation remains succeeded with one attempt and one `approval_apply_prepared` audit row. Repeated apply returns the persisted terminal result without another remote POST.
+- Existing approval state-machine and safe-apply tests cover rejected, expired, lapsed, lost-response-after-apply and unresolved ambiguous outcomes; those cases do not apply an unapproved change or blindly repeat an ambiguous apply.
+- Focused recovery/governance/incident suite: 28 passed on isolated PostgreSQL. Ruff, formatting, compileall and diff checks passed. The separate-process real simulator approval kill remains for subtask 5.
