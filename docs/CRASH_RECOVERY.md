@@ -76,3 +76,47 @@ proposal and approval ID, hard-terminate the process, then restart against the
 same database and simulator and verify decision reconciliation and a single
 configuration history effect. Capture SQL counts/checkpoints and documented
 HTTP outcomes; do not read simulator run-directory files or scenario truth.
+
+### Windows PowerShell command sequence used
+
+The executed demonstration used PostgreSQL 18 on port 5448, isolated databases
+`formi_chunk8_20261108` and `formi_chunk8_approval_20261108`, and two dedicated
+`public_02` simulator processes on ports 8710 and 8711. The two databases and
+simulators were kept unchanged across their respective Controller restarts.
+`simulator_events` and `governance_proposals` were paused with temporary
+PostgreSQL triggers; the triggers were removed after each hard kill. PostgreSQL
+backends sleeping in the test triggers were terminated after the Controller
+process tree was killed so rollback could be observed immediately.
+
+The ingestion run used the equivalent of:
+
+```powershell
+py -3.12 -m sim serve --scenario scenarios/public_02_incidents.yaml `
+  --run-dir $env:TEMP/formi-chunk8-real/sim-run --host 127.0.0.1 --port 8710
+$env:CONTROLLER_DATABASE_URL='postgresql+asyncpg://postgres@127.0.0.1:5448/formi_chunk8_20261108'
+py -3.12 -m alembic -c alembic.ini upgrade head
+# Install a BEFORE INSERT trigger on simulator_events that runs pg_sleep(120)
+# only when NEW.event_id = 1. Start `./run.sh http://127.0.0.1:8710` as a
+# separate process and wait until pg_stat_activity reports PgSleep in its
+# INSERT. Then taskkill /PID <controller-bash-pid> /T /F, terminate the sleeping
+# database backend, and verify zero event rows and no simulator checkpoint.
+# Drop the trigger, restart the same ./run.sh URL with the same database URL.
+```
+
+The approval run used the same shape with database
+`formi_chunk8_approval_20261108` and simulator port 8711. Install a
+`BEFORE UPDATE` trigger on `governance_proposals` that sleeps only when status
+changes from `submitted` to `pending`. Start the Controller and wait until the
+documented `GET /approvals?workflow_id=ks_cancel` returns the approval as
+pending and PostgreSQL reports the trigger sleeping. At this point the local
+proposal is durably submitted and its submission outbox is `in_progress`.
+Hard-terminate the Controller process tree, terminate the sleeping backend,
+drop the trigger, and relaunch `./run.sh http://127.0.0.1:8711` with the same
+database URL. The Controller lists approvals by the persisted proposal ID,
+records the existing pending approval, then polls and safely applies it after
+approval. It does not POST `/approvals` again.
+
+The Controller child process is launched independently (for example through
+Git Bash `./run.sh <SIM_URL>`) so it can be terminated with Windows
+`taskkill /T /F`. Use distinct fresh databases for independent simulator
+worlds; within each crash demonstration, never reset its database or simulator.
