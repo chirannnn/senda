@@ -159,6 +159,13 @@ fact mapping, invalid/incomplete classifications, QA fields, and separate KPI
 calculation tests remain the correctness baseline for a future profile-led
 change.
 
+For PostgreSQL, existing commits `10c98f9` and `8f68b9a` already eliminate the
+identified fresh-row readback and batch fact insert/reference work. The
+preserved public run predates both, and the single-row timing probe is not
+representative. No additional storage strategy, index/constraint change, WAL
+tuning, or concurrency is justified without operation-level timing and
+PostgreSQL resource evidence.
+
 No public load, stress test, or large dataset was used for this assessment.
 
 The implementation phase's final full suite passed with 299 tests on the
