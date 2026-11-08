@@ -79,3 +79,13 @@ for this work. Tests measure correctness and SQL statement shape on small
 PostgreSQL fixtures. No wall-time improvement is claimed. Re-measurement on a
 fresh permitted public scenario is still needed to quantify throughput, memory,
 database growth, and whether the SRE threshold improves.
+
+## Post-optimization verification
+
+- Focused event-storage/fact-persistence tests passed: 16 tests after the first
+  optimization; focused fact-pipeline tests passed: 10 tests after the second.
+- Full suite on the isolated PostgreSQL test database passed: 283 tests.
+- `ruff check .`, `ruff format --check .`,
+  `python -B -m compileall -q controller tests scripts`, Alembic `upgrade head`,
+  Alembic `check`, and `git diff --check` all passed.
+- These checks validate behavior and schema consistency, not a throughput gain.
