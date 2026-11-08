@@ -10,7 +10,7 @@ from sqlalchemy.exc import IntegrityError
 from controller.analytics.cohorts import definitions_from_config
 from controller.analytics.facts import PROCESSOR_NAME, KpiFactProcessor, derive_fact
 from controller.analytics.kpis import KpiCalculator
-from controller.storage.models import KpiFact, SimulatorEvent
+from controller.storage.models import KpiFact, SimulatorEvent, WorkflowReference
 from controller.storage.store import DatabaseStore, EventRecord, KpiFactRecord
 from controller.telemetry import RuntimeTelemetry
 
@@ -155,7 +155,10 @@ async def test_fact_derivation_is_idempotent_and_survives_store_reopen(postgres_
     for metric_name, expected_count in (
         ("fact_workflow_reference_upsert_seconds", 2),
         ("fact_page_payload_build_seconds", 2),
+        ("fact_stage_create_seconds", 2),
         ("fact_insert_execute_seconds", 2),
+        ("fact_copy_execute_seconds", 2),
+        ("fact_stage_merge_execute_seconds", 2),
         ("fact_cursor_update_seconds", 2),
         ("fact_page_commit_seconds", 2),
     ):
@@ -242,6 +245,9 @@ async def test_failed_fact_transaction_does_not_advance_analytics_cursor(
         await store.commit_kpi_page("failure-test", [invalid_fk_fact], 999999)
     assert await store.get_analytics_cursor("failure-test") == 0
     assert await store.get_event(999999) is None
+    async with store.transaction() as session:
+        assert await session.get(KpiFact, 999999) is None
+        assert await session.get(WorkflowReference, "missing-source-workflow") is None
 
 
 @pytest.mark.anyio

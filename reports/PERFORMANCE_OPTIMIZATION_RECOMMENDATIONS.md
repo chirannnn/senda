@@ -398,3 +398,70 @@ that transaction. A PostgreSQL integration test simulates a database at
 revision 0008 with the prior index present, calls the Controller's migration
 entry point, and verifies revision 0009 plus index removal. `store.migrate()`
 was also exercised twice on the newly created isolated microbenchmark DB.
+
+
+### KPI fact persistence prototype: COPY staging selected
+
+A small controlled PostgreSQL comparison was run on newly created isolated
+`formi_kpi_micro_20261109`, with the current migrated schema, KPI indexes and
+foreign keys. Each method handled five 1,000-row batches with the same
+synthetic row distribution (four workflows, call/lead facts, metrics, JSON
+variant/features, and timezone-aware timestamps). Each measured page performed
+the workflow-reference upsert, fact persistence, analytics cursor write, and
+commit. The order alternated between methods. No benchmark or test database
+that existed before this work was used.
+
+| Path | Median page wall time | Median fact SQL / COPY merge | Median transaction commit |
+|---|---:|---:|---:|
+| Existing SQLAlchemy multi-row `INSERT ... ON CONFLICT` | 356.699 ms | 281.374 ms | 2.357 ms |
+| COPY to transaction-local stage, then `INSERT ... SELECT ... ON CONFLICT` | 47.685 ms | 26.049 ms merge (about 5.7 ms COPY) | 2.447 ms |
+
+On this fixture the staging path reduced median page time by **86.6%** (7.48x
+faster). It kept the same indexes, FKs, conflict target, batched workflow
+upsert, analytics cursor update, and transaction boundary. Commits were nearly
+the same; the observed gain came from moving the 22,000-value page through
+COPY instead of binding a wide multi-row SQL statement. This is a fixture
+measurement, not a public workload guarantee.
+
+Paired `EXPLAIN (ANALYZE, BUFFERS, WAL)` probes on 1,000 new rows reported
+multi-row INSERT planning/execution of 2.215/52.377 ms and COPY-stage merge
+planning/execution of 0.278/30.425 ms, both with zero shared reads and about
+14.4k shared-buffer hits. Foreign-key triggers still ran 1,000 times each;
+reported trigger time was 6.866 ms + 10.936 ms for the multi-row probe and
+7.060 ms + 5.956 ms for the merge probe. The plans produced different
+full-page-image counts (70 versus 0), so their WAL byte comparison is not
+attributable solely to the insertion method. Transaction-level WAL LSN deltas
+were cluster-wide and varied with page state; no WAL reduction is claimed.
+There is no query-specific wait profile because `pg_stat_statements` is not
+installed and changing shared PostgreSQL configuration is outside scope.
+
+`DatabaseStore.commit_kpi_page()` now copies bounded `KpiFactRecord` tuples
+into a transaction-local temp table and merges them into `kpi_facts` with
+`ON CONFLICT (source_event_id) DO NOTHING`. The stage is created and dropped
+inside the existing page transaction. Workflow upsert, fact insert, and cursor
+advance remain atomic. JSON fields are serialized with the standard JSON
+serializer; database columns keep their original types and defaults. Added
+fixed-name timers split stage creation, COPY, and set-based merge while keeping
+the existing aggregate insert timer.
+
+The production method was exercised on fresh 1,000-row pages: three warm
+samples took 44.596 ms and 42.039 ms for the latter two; the first cold sample
+took 192.521 ms, largely in its first workflow upsert (134.267 ms). Replaying
+a committed page inserted zero rows and left the cursor at the page's final
+source event. A PostgreSQL failure test confirms a failed merge rolls back the
+fact rows, workflow-reference upsert, and analytics cursor. The full suite
+passes 305 tests; Ruff, formatting, compileall, Alembic check, and diff checks
+pass.
+
+Experiment note: the first exploratory EXPLAIN DML transaction exited normally
+and therefore committed its 2,000 synthetic fact rows in the isolated
+microbenchmark database. They use separate event IDs from the timed trials.
+The final paired EXPLAIN probes used explicit rollback. The dedicated
+microbenchmark database is retained with only small synthetic fixtures; no
+existing database or benchmark evidence was changed.
+
+This measured prototype is the only new fact-persistence implementation. The
+full-run impact is unverified: the 50-minute target cannot be claimed without a
+permitted full public run. Other KPI SQL/index changes, larger pages, event
+persistence changes, and concurrency are assessed separately below/next;
+constraints and the ordered cursor remain in place.

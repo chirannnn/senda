@@ -407,3 +407,12 @@ Known limits: the synthetic 30,000-event development-host measurement is not a g
 
 
 - Fixed Controller-startup migration compatibility for concurrent index DDL: `DatabaseStore.migrate()` now delegates transaction ownership to Alembic. A focused PostgreSQL integration test simulates the previous revision/index and verifies startup upgrades to head and removes the index; repeated startup migration is safe.
+
+
+### KPI fact persistence: COPY staging
+
+- On new isolated PostgreSQL DB `formi_kpi_micro_20261109`, compared five alternating 1,000-row batches per method with identical synthetic distributions, indexes/FKs, workflow upsert, cursor update, and commits. Existing multi-row insert median page time: **356.699 ms** (fact SQL 281.374 ms, commit 2.357 ms). COPY-to-temp plus set-based merge median page time: **47.685 ms** (COPY about 5.7 ms, merge 26.049 ms, commit 2.447 ms): **86.6% lower fixture time / 7.48x**. No public workload speedup is claimed.
+- Implemented COPY staging inside `commit_kpi_page()` with a transaction-local temp table and unchanged `ON CONFLICT (source_event_id) DO NOTHING`; workflow upsert, fact rows, and cursor remain atomic. Added stage/COPY/merge timers.
+- Focused fact, pipeline, history and storage tests: **23 passed**. Full isolated PostgreSQL suite: **305 passed**. Alembic check, Ruff, formatting (107 files), compileall, and `git diff --check` passed. Failure injection verifies that the staged merge error rolls back fact rows, workflow upsert, and cursor. Fresh 1,000-row pages persisted correctly and replay returned zero.
+- EXPLAIN measured both server insert plans and FK trigger calls; buffers were all hits. WAL results varied with full-page images and cluster-wide LSN deltas, so no WAL reduction is claimed. `pg_stat_statements` remains unavailable without shared PostgreSQL changes.
+- One initial exploratory EXPLAIN probe committed 2,000 synthetic rows in the new microbenchmark DB; they are separate from timed trials. Final EXPLAIN probes were rolled back. This new database is retained; existing databases and evidence remain unchanged.

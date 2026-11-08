@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 from collections.abc import AsyncIterable, AsyncIterator, Iterator, Mapping
 from contextlib import asynccontextmanager, contextmanager
@@ -50,6 +51,30 @@ MAX_EVENT_INSERT_BATCH_ROWS = (
     _POSTGRES_BIND_PARAMETER_LIMIT // _EVENT_INSERT_BIND_COLUMNS
 )
 MAX_KPI_FACT_PAGE_ROWS = _POSTGRES_BIND_PARAMETER_LIMIT // _KPI_FACT_BIND_COLUMNS
+_KPI_FACT_COPY_COLUMNS = (
+    "source_event_id",
+    "source_chunk",
+    "source_kind",
+    "workflow_id",
+    "event_type",
+    "occurred_at",
+    "campaign_id",
+    "lead_id",
+    "person_id",
+    "config_version",
+    "observed_cohort_id",
+    "variant",
+    "features",
+    "quality",
+    "quality_detail",
+    "dials",
+    "connected",
+    "concluded",
+    "uploaded",
+    "qa_hallucination",
+    "qa_flow_adherence",
+    "qa_quality",
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -478,39 +503,63 @@ class DatabaseStore:
             if facts:
                 with _observe_elapsed(telemetry, "fact_page_payload_build_seconds"):
                     rows = [
-                        {
-                            "source_event_id": fact.source_event_id,
-                            "source_chunk": fact.source_chunk,
-                            "source_kind": fact.source_kind,
-                            "workflow_id": fact.workflow_id,
-                            "event_type": fact.event_type,
-                            "occurred_at": fact.occurred_at,
-                            "campaign_id": fact.campaign_id,
-                            "lead_id": fact.lead_id,
-                            "person_id": fact.person_id,
-                            "config_version": fact.config_version,
-                            "observed_cohort_id": fact.observed_cohort_id,
-                            "variant": fact.variant,
-                            "features": fact.features,
-                            "quality": fact.quality,
-                            "quality_detail": fact.quality_detail,
-                            "dials": fact.dials,
-                            "connected": fact.connected,
-                            "concluded": fact.concluded,
-                            "uploaded": fact.uploaded,
-                            "qa_hallucination": fact.qa_hallucination,
-                            "qa_flow_adherence": fact.qa_flow_adherence,
-                            "qa_quality": fact.qa_quality,
-                        }
+                        (
+                            fact.source_event_id,
+                            fact.source_chunk,
+                            fact.source_kind,
+                            fact.workflow_id,
+                            fact.event_type,
+                            fact.occurred_at,
+                            fact.campaign_id,
+                            fact.lead_id,
+                            fact.person_id,
+                            fact.config_version,
+                            fact.observed_cohort_id,
+                            json.dumps(fact.variant)
+                            if fact.variant is not None
+                            else None,
+                            json.dumps(fact.features)
+                            if fact.features is not None
+                            else None,
+                            fact.quality,
+                            fact.quality_detail,
+                            fact.dials,
+                            fact.connected,
+                            fact.concluded,
+                            fact.uploaded,
+                            fact.qa_hallucination,
+                            fact.qa_flow_adherence,
+                            fact.qa_quality,
+                        )
                         for fact in facts
                     ]
-                statement = (
-                    postgresql_insert(KpiFact)
-                    .values(rows)
-                    .on_conflict_do_nothing(index_elements=[KpiFact.source_event_id])
-                )
+                with _observe_elapsed(telemetry, "fact_stage_create_seconds"):
+                    await session.execute(
+                        text(
+                            "CREATE TEMP TABLE _controller_kpi_fact_stage "
+                            "(LIKE kpi_facts INCLUDING DEFAULTS) ON COMMIT DROP"
+                        )
+                    )
+                connection = await session.connection()
+                raw_connection = await connection.get_raw_connection()
+                driver_connection = raw_connection.driver_connection
                 with _observe_elapsed(telemetry, "fact_insert_execute_seconds"):
-                    result = await session.execute(statement)
+                    with _observe_elapsed(telemetry, "fact_copy_execute_seconds"):
+                        await driver_connection.copy_records_to_table(
+                            "_controller_kpi_fact_stage",
+                            records=rows,
+                            columns=list(_KPI_FACT_COPY_COLUMNS),
+                        )
+                    column_list = ", ".join(_KPI_FACT_COPY_COLUMNS)
+                    merge_statement = text(
+                        f"INSERT INTO kpi_facts ({column_list}) "
+                        f"SELECT {column_list} FROM pg_temp._controller_kpi_fact_stage "
+                        "ON CONFLICT (source_event_id) DO NOTHING"
+                    )
+                    with _observe_elapsed(
+                        telemetry, "fact_stage_merge_execute_seconds"
+                    ):
+                        result = await session.execute(merge_statement)
                 if result.rowcount is None or result.rowcount < 0:
                     raise RuntimeError(
                         "database did not report the number of inserted KPI facts"
