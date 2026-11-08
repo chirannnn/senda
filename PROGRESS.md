@@ -3,8 +3,8 @@
 ## Overall status: COMPLETE THROUGH CHUNK 8
 
 **Current phase:** Chunk 8 crash recovery demonstration complete
-**Current chunk:** 8 ? Crash recovery demonstration (complete)
-**Current next action:** Chunk 9 load and observability; not started in this change.
+**Current chunk:** 8 - Crash recovery demonstration (complete)
+**Current next action:** Chunk 9 - Load and observability (NOT STARTED).
 
 ## Implementation progress
 
@@ -15,11 +15,11 @@
 | 3 | Simulator chunk ingestion | COMPLETE | `d921490`, `b6b88f6`, `6bdce40`, `f975203`, `09bf0b6`, `adf5b54` |
 | 4 | History, KPI facts, audit query | COMPLETE | `79caf3d`, `bf4e93b`, `237d6b2`, `f640e9b`, `bd1f94b`, `b87a39b` |
 | 5 | Governance lifecycle | COMPLETE | `29d7e81`, `d04a0bf`, `40aca99`, `feb3c77`, `50fbc35`, `df4d945` |
-| 6 | Statistical comparison | COMPLETE | `7a3d228`, `eef6137`, `ecb6d92`, `dba33bf`, this completion commit |
-| 7 | Public incident workflow | COMPLETE | `3d28f68`, `7a4dadf`, `88f71bc`, `aa59820`, `ade9e79`, this completion commit |
-| 8 | Crash recovery demonstration | NOT STARTED | â€” |
-| 9 | Load and observability | NOT STARTED | â€” |
-| 10 | Submission and final grading | NOT STARTED | â€” |
+| 6 | Statistical comparison | COMPLETE | `7a3d228`, `eef6137`, `ecb6d92`, `dba33bf`, `faca570` |
+| 7 | Public incident workflow | COMPLETE | `3d28f68`, `7a4dadf`, `88f71bc`, `aa59820`, `ade9e79`, `4a0f257` |
+| 8 | Crash recovery demonstration | COMPLETE | `7222007`, `b2ef987`, `3b3a521`, `9f6f61b`, `82ed4c7`, `6e11334` |
+| 9 | Load and observability | NOT STARTED | planned |
+| 10 | Submission and final grading | NOT STARTED | planned |
 
 ## Chunk 6 subtask progress
 
@@ -164,9 +164,9 @@ Subtask 4 starts the simulator through documented readiness/state/workflow reads
 
 Chunk 2 verification used `CONTROLLER_TEST_DATABASE_URL` for an isolated PostgreSQL 18 test database outside the repository. `python -m pytest -q tests/integration/storage/test_store.py` â€” **11 passed**. `python -m pytest -q` â€” **63 passed** with PostgreSQL integration tests enabled. `ruff check controller tests/integration tests/unit migrations`, `ruff format --check controller tests/integration tests/unit migrations`, `python -m compileall -q controller tests migrations`, `alembic check`, and `git diff --check` passed. No assessment scenario was run.
 
-Chunk 1 runtime and launcher tests use fakes/HTTPX mock transport and do not require the assessment simulator or Docker. No full assessment scenario, load run, crash-recovery demonstration, or type checker run has been performed. Ruff initially found a pre-existing import-order issue in the simulator contract test; it was corrected as an import-only cleanup while moving that test to `tests/contract/`. Ruff check and formatting now cover `controller`, `tests`, and `migrations`.
+Historical note from Chunk 1: runtime and launcher tests used fakes/HTTPX mock transport and did not require the assessment simulator or Docker. At that point no full assessment scenario, load run, crash-recovery demonstration, or type checker run had been performed. Ruff now covers `controller`, `tests`, and `migrations`.
 
-No assessment scenario or full end-to-end run has been performed yet. Chunk 1 unit-test results are tracked in the subtask table above.
+At the time of the initial Chunk 1 work, no assessment scenario or full end-to-end run had been performed. Later scenario results are recorded under Chunks 7 and 8.
 
 ## Repository structure refactor (2026-11-07)
 
@@ -228,7 +228,7 @@ Do not rewrite prior history.
 
 ## Next action
 
-Chunk 4 is complete. Next: Chunk 5 â€” Governance lifecycle. It has not started; wait for review/approval before beginning.
+Chunks 1-8 are complete. Next: Chunk 9 - Load and observability. Chunks 9 and 10 remain NOT STARTED.
 
 ### Chunk 3 measured evidence (synthetic HTTP stream, PostgreSQL 18)
 
@@ -258,8 +258,19 @@ Known limits: these are synthetic development-host measurements, not `public_03_
 - Public `public_02` completed at simulated minute 14,400. The official grader reports one approved prompt change applied through governance and rated beneficial; 4 credits were spent (one suggestion and one validation).
 - Incident evidence at cutoff 234187 compared 37 baseline people with 39 changed-config people after excluding cross-version people. Hallucination proxy rates were 0.0% and 7.69%; the configured engineering one-sided screen p <= 0.10 passed at p=0.0695.
 - Candidate P1 passed simulator validation at 0.98 against the workflow floor 0.97 (n=100), was approved as `apr_00001`, and applied as config version 3. Final monitor cutoff 324308 was persisted as insufficient: QA and engagement had 11 paired people, below the 30-person gate; no corrective proposal was sent.
-- Final full suite: 258 passed on isolated PostgreSQL 18. `ruff check .`, `ruff format --check .`, `compileall`, Alembic check and `git diff --check` passed. Chunk 8 remains NOT STARTED.
+- Final full suite: 258 passed on isolated PostgreSQL 18. `ruff check .`, `ruff format --check .`, `compileall`, Alembic check and `git diff --check` passed. Chunk 8 was subsequently completed; see the recovery evidence below.
 
+
+## Chunk 8 subtask progress
+
+| Subtask | Status | Validation | Commit |
+|---|---|---|---|
+| 1. Recovery audit | COMPLETE | Recovery windows, invariants, procedure and limits documented | `7222007` |
+| 2. Partial chunk ingestion recovery | COMPLETE | Real child-process termination and PostgreSQL rollback/replay test; focused checks passed | `b2ef987` |
+| 3. Pending approval recovery | COMPLETE | PostgreSQL restart/reconciliation tests; focused suite passed | `3b3a521` |
+| 4. Repeated starts and ambiguous operations | COMPLETE | Restart, no-duplicate POST and manual-review tests passed | `9f6f61b` |
+| 5. Real crash demonstration | COMPLETE | Two actual Controller process kills and same-simulator/database restarts verified | `82ed4c7` |
+| 6. Final acceptance and report | COMPLETE | Full isolated PostgreSQL suite: 260 passed; Ruff, format, compileall, Alembic check and diff check passed | `6e11334` |
 
 ## Chunk 8 recovery audit
 
