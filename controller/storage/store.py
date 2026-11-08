@@ -705,6 +705,29 @@ class DatabaseStore:
         async with self._sessions() as session:
             return await session.get(IncidentRecord, incident_id)
 
+    async def list_incidents(self, *, limit: int = 1000) -> list[IncidentRecord]:
+        """Return recent durable incidents for runtime phase reconciliation."""
+        if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1:
+            raise ValueError("incident limit must be positive")
+        self._ensure_open()
+        statement = (
+            select(IncidentRecord).order_by(IncidentRecord.updated_at).limit(limit)
+        )
+        async with self._sessions() as session:
+            return list((await session.scalars(statement)).all())
+
+    async def get_incident_for_version(
+        self, workflow_id: str, config_version: int
+    ) -> IncidentRecord | None:
+        """Read the unique incident record for one workflow configuration."""
+        self._ensure_open()
+        statement = select(IncidentRecord).where(
+            IncidentRecord.workflow_id == workflow_id,
+            IncidentRecord.trigger_config_version == config_version,
+        )
+        async with self._sessions() as session:
+            return await session.scalar(statement)
+
     async def save_incident(
         self,
         session: AsyncSession,

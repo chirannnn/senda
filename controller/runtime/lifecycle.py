@@ -5,16 +5,19 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any, Protocol
 
 from controller.analytics.facts import KpiFactProcessor
 from controller.config import Settings
 from controller.errors import AmbiguousPostError, SimulatorError, SimulatorHTTPError
+from controller.incidents import process_population_incidents
 from controller.ingestion.runner import (
     advance_and_ingest,
     reconcile_pending_advances,
 )
 from controller.ingestion.service import EventIngestionService
+from controller.storage.audit import AuditLog
 from controller.storage.store import DatabaseStore
 
 logger = logging.getLogger(__name__)
@@ -56,11 +59,15 @@ async def run_controller(
     )
     ingestion = EventIngestionService(simulator) if store is not None else None
     fact_processor = KpiFactProcessor(store) if store is not None else None
+    audit = AuditLog(store) if store is not None else None
     if store is not None and ingestion is not None:
         await ingestion.ingest_available_chunks(store)
         await reconcile_pending_advances(simulator, store, service=ingestion)
         await _process_facts(fact_processor)
         state = await simulator.get_state()
+        await _process_incidents(
+            simulator, store, audit, state, final=_is_finished(state)
+        )
     if _is_finished(state):
         return RuntimeOutcome(completed=True, stopped=False)
 
@@ -70,6 +77,10 @@ async def run_controller(
                 simulator, store, settings.advance_minutes, service=ingestion
             )
             await _process_facts(fact_processor)
+            state = await simulator.get_state()
+            await _process_incidents(
+                simulator, store, audit, state, final=result.finished
+            )
             if result.finished:
                 return RuntimeOutcome(completed=True, stopped=False)
             logger.info(
@@ -129,6 +140,28 @@ async def _process_facts(processor: KpiFactProcessor | None) -> None:
                 "facts_inserted": inserted,
             },
         )
+
+
+async def _process_incidents(simulator, store, audit, state, *, final=False) -> None:
+    if store is None or audit is None:
+        return
+    timestamp = state.get("ts")
+    if not isinstance(timestamp, str):
+        return
+    try:
+        now = datetime.fromisoformat(timestamp)
+    except ValueError:
+        return
+    if now.tzinfo is None:
+        return
+    await process_population_incidents(
+        simulator,
+        store,
+        audit,
+        now=now,
+        cutoff_event_id=await store.get_latest_event_id() or 0,
+        final=final,
+    )
 
 
 def _is_finished(payload: dict[str, Any]) -> bool:

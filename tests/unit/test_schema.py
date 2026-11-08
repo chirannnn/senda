@@ -27,6 +27,7 @@ def test_durable_schema_contains_required_versioned_entities():
         "outbox_operations",
         "governance_proposals",
         "experiment_decisions",
+        "incident_records",
     } == set(Base.metadata.tables)
 
 

@@ -1,10 +1,10 @@
 # Progress Tracking â€” Outcome-First Agent Loop
 
-## Overall status: IN PROGRESS ? CHUNK 7
+## Overall status: COMPLETE THROUGH CHUNK 7
 
-**Current phase:** Chunk 7 population-level incident workflow
-**Current chunk:** 7 ? Public incident workflow
-**Current next action:** Complete Chunk 7 subtasks sequentially; governed proposal integration is implemented.
+**Current phase:** Chunk 7 public incident workflow complete
+**Current chunk:** 7 ? Public incident workflow (complete)
+**Current next action:** Chunk 8 crash recovery demonstration; not started in this change.
 
 ## Implementation progress
 
@@ -16,7 +16,7 @@
 | 4 | History, KPI facts, audit query | COMPLETE | `79caf3d`, `bf4e93b`, `237d6b2`, `f640e9b`, `bd1f94b`, `b87a39b` |
 | 5 | Governance lifecycle | COMPLETE | `29d7e81`, `d04a0bf`, `40aca99`, `feb3c77`, `50fbc35`, `df4d945` |
 | 6 | Statistical comparison | COMPLETE | `7a3d228`, `eef6137`, `ecb6d92`, `dba33bf`, this completion commit |
-| 7 | Public incident workflow | IN PROGRESS | `3d28f68`, `7a4dadf`, `88f71bc`, current subtask commit |
+| 7 | Public incident workflow | COMPLETE | `3d28f68`, `7a4dadf`, `88f71bc`, `aa59820`, `ade9e79`, this completion commit |
 | 8 | Crash recovery demonstration | NOT STARTED | â€” |
 | 9 | Load and observability | NOT STARTED | â€” |
 | 10 | Submission and final grading | NOT STARTED | â€” |
@@ -37,7 +37,7 @@
 - Final checks: `pytest -q`: 222 passed; `ruff check .`, `ruff format --check .`, `python -m compileall -q controller tests`, Alembic check and `git diff --check` passed.
 - `public_01_dev` completed through HTTP ingestion: simulator finished at 11,520 simulated minutes with 297,024 events; grader output was written under the OS temporary directory. It reported zero applied changes and 0.0% KPI delta versus baseline because runtime does not schedule statistical plans.
 - Chunk 6 decision and proposal components are callable but not wired to runtime scheduling. A caller must supply an explicit plan (baselines, allocations, clustering, power, imbalance tolerance, fixed window/cutoff). Missing inputs or workflow guardrails produce no decision/proposal. Simulator per-dial assignment cannot guarantee one arm per person; cross-arm people are excluded and the limitation is documented in `docs/DECISION_POLICY.md`.
-- Chunk 7 remains NOT STARTED.
+- Chunk 7 is complete; incident workflow details and limitations are recorded below.
 
 ## Chunk 5 subtask progress
 
@@ -238,7 +238,7 @@ Chunk 4 is complete. Next: Chunk 5 â€” Governance lifecycle. It has not sta
 - Synthetic streamed PostgreSQL integration ingested 30,000 generated events in batches of 500 at **1,601 events/s** with **2.54 MiB peak traced Python memory** on this Windows development host. This is a local synthetic measurement, not a simulator load-scenario result or grading-host claim.
 - Runtime integration bootstrapped two history events before one live advance, persisted two live events, and completed at checkpoint 4. Restart recovery used fresh client/store instances over the same PostgreSQL data; no OS-level kill/restart demonstration was run in this chunk.
 - Final checks: `.venv/Scripts/python.exe -m pytest -q tests/unit/ingestion/` â€” **19 passed**; `.venv/Scripts/python.exe -m pytest -q tests/integration/ingestion/` â€” **11 passed**; `.venv/Scripts/python.exe -m pytest -q` â€” **93 passed**; `ruff check .` passed; `ruff format --check .` reported 47 files already formatted; `.venv/Scripts/python.exe -m compileall -q controller tests` passed; Alembic `upgrade head` repeated and `check` reported no new operations; `git diff --check` passed. Ruff excludes only assignment-provided `sim/` and deliberately naive `examples/naive_controller.py`; neither was modified.
-- No schema migration was needed. Public scenarios remain NOT RUN; no scenario YAML or run-directory data was used by controller decisions.
+- Chunk 6 required no schema migration. Chunk 7 public_02 ran in a fresh simulator and PostgreSQL database; see `reports/public_02.md`. No scenario YAML or run-directory data was used to make controller decisions.
 
 Known limits: these are synthetic development-host measurements, not `public_03_load` or grading-host results. The 1 MiB memory spool spills larger chunks to temporary disk without a hard total-byte cap, so deployments need sufficient temp capacity. Event IDs and the checkpoint are scoped to one simulator world per database; use a fresh database for independent simulator worlds until multi-run namespacing is designed.
 
@@ -249,6 +249,13 @@ Known limits: these are synthetic development-host measurements, not `public_03_
 | 1. Incident evidence | COMPLETE | 11 focused unit tests and 2 isolated PostgreSQL storage tests passed; migration 0008 applied; Ruff, format, compileall and diff check passed | `3d28f68` |
 | 2. Credit-aware LLM suggestion | COMPLETE | 27 focused unit/PostgreSQL integration tests passed; Ruff, format, compileall and diff check passed | `7a4dadf` |
 | 3. Candidate validation | COMPLETE | 42 focused unit/PostgreSQL integration tests passed; Ruff, format, compileall, Alembic check and diff check passed | `88f71bc` |
-| 4. Governed prompt proposal | COMPLETE | 47 focused unit/PostgreSQL integration tests passed; Ruff, format, compileall, Alembic check and diff check passed | this subtask commit |
-| 5. Post-apply monitoring | NOT STARTED | — | — |
-| 6. Public scenario and acceptance | NOT STARTED | — | — |
+| 4. Governed prompt proposal | COMPLETE | 47 focused unit/PostgreSQL integration tests passed; Ruff, format, compileall, Alembic check and diff check passed | `aa59820` |
+| 5. Post-apply monitoring | COMPLETE | 18 focused PostgreSQL incident tests passed; Ruff, format, compileall and diff check passed | `ade9e79` |
+| 6. Public scenario and acceptance | COMPLETE | 258 tests passed on isolated PostgreSQL; Ruff, format, compileall, Alembic and diff checks passed; public_02 completed and grader ran | this completion commit |
+
+## Chunk 7 acceptance results
+
+- Public `public_02` completed at simulated minute 14,400. The official grader reports one approved prompt change applied through governance and rated beneficial; 4 credits were spent (one suggestion and one validation).
+- Incident evidence at cutoff 234187 compared 37 baseline people with 39 changed-config people after excluding cross-version people. Hallucination proxy rates were 0.0% and 7.69%; the configured engineering one-sided screen p <= 0.10 passed at p=0.0695.
+- Candidate P1 passed simulator validation at 0.98 against the workflow floor 0.97 (n=100), was approved as `apr_00001`, and applied as config version 3. Final monitor cutoff 324308 was persisted as insufficient: QA and engagement had 11 paired people, below the 30-person gate; no corrective proposal was sent.
+- Final full suite: 258 passed on isolated PostgreSQL 18. `ruff check .`, `ruff format --check .`, `compileall`, Alembic check and `git diff --check` passed. Chunk 8 remains NOT STARTED.

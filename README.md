@@ -266,6 +266,12 @@ fifteen sketched.
 | C14 | Observability of the loop itself: ingest lag, decisions/hour, credit burn, alerts an on-call engineer can act on |
 | C15 | Fair allocation of credits and approver attention across tenants |
 
+**C8 incident response:** `controller.incidents.process_population_incidents` watches documented supervisor
+prompt changes, waits for a fixed population QA evidence gate, then uses credit-checked suggestions, simulator
+validation and the Chunk 5 approval/apply lifecycle. It records one post-apply monitoring snapshot and makes a
+new governed proposal only when the evidence gate supports it. It never auto-rolls back a prompt. See
+[`docs/INCIDENT_POLICY.md`](docs/INCIDENT_POLICY.md) for the engineering evidence defaults and limitations.
+
 **Floor (mandatory):** the controller runs public_01 and public_02 end to end with no manual steps, keeps an
 audit trail (C12, even a minimal one), never breaks the constraints above, and `SUBMISSION.md` is complete.
 Everything beyond that is your call. Write down what you cut and why.

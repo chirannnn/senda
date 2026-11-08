@@ -7,7 +7,7 @@ import json
 import math
 import random
 from dataclasses import asdict, dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, Protocol
 
 from controller.errors import (
@@ -19,7 +19,8 @@ from controller.errors import (
 from controller.governance.proposals import ProposalPayload, submit_proposal
 from controller.governance.reconcile import apply_approved_proposal
 from controller.governance.state_machine import ProposalStatus, poll_approval
-from controller.statistics.estimation import holm_adjust
+from controller.statistics.estimation import estimate_rate_difference, holm_adjust
+from controller.statistics.models import PersonOutcome
 from controller.storage.audit import AuditEntry, AuditLog
 from controller.storage.models import KpiFact
 from controller.storage.store import DatabaseStore, IncidentStateConflictError
@@ -33,6 +34,8 @@ class IncidentSuggestionAPI(Protocol):
     async def list_workflows(self) -> list[dict[str, Any]]: ...
 
     async def get_workflow_config(self, workflow_id: str) -> dict[str, Any]: ...
+
+    async def get_config_history(self, workflow_id: str) -> list[dict[str, Any]]: ...
 
     async def suggest_fixes(self, workflow_id: str, problem: str) -> dict[str, Any]: ...
 
@@ -51,8 +54,6 @@ class IncidentSuggestionAPI(Protocol):
     async def apply_approval(
         self, workflow_id: str, approval_id: str
     ) -> dict[str, Any]: ...
-
-    async def get_config_history(self, workflow_id: str) -> list[dict[str, Any]]: ...
 
 
 SUGGESTION_CREDIT_COST = 3.0
@@ -1209,11 +1210,12 @@ async def monitor_applied_prompt(
         (
             item
             for item in history
-            if item.get("version") == base_version
-            and isinstance(item.get("applied_at"), str)
+            if item.get("version")
+            == incident.evidence.get("baseline_config_version", base_version)
         ),
         None,
     )
+    baseline_version = incident.evidence.get("baseline_config_version", base_version)
     if (
         applied is None
         or prior is None
@@ -1227,7 +1229,11 @@ async def monitor_applied_prompt(
             status="monitoring_stale",
             reason="Config history does not match the applied approval",
         )
-    baseline_start = _parse_timestamp(prior["applied_at"])
+    baseline_start = _parse_timestamp(
+        incident.evidence.get("baseline_window_start", "")
+    )
+    if baseline_start is None and isinstance(prior.get("applied_at"), str):
+        baseline_start = _parse_timestamp(prior["applied_at"])
     applied_at = _parse_timestamp(applied["applied_at"])
     if baseline_start is None or applied_at is None or monitor_end <= applied_at:
         return await _record_monitor_block(
@@ -1263,7 +1269,7 @@ async def monitor_applied_prompt(
     baseline_facts = await _incident_monitor_facts(
         store,
         workflow_id=incident.workflow_id,
-        config_version=base_version,
+        config_version=baseline_version,
         start_at=baseline_start,
         end_at=applied_at,
         cutoff_event_id=cutoff_event_id,
@@ -1325,6 +1331,7 @@ async def monitor_applied_prompt(
         "incident_id": incident_id,
         "workflow_id": incident.workflow_id,
         "base_version": base_version,
+        "baseline_config_version": baseline_version,
         "applied_version": applied["version"],
         "baseline_start": baseline_start.isoformat(),
         "applied_at": applied_at.isoformat(),
@@ -1559,6 +1566,468 @@ async def propose_monitoring_correction(
                 "incident_id": remediation_id,
             }
     return {"status": "no_validated_candidate", "incident_id": remediation_id}
+
+
+async def process_population_incidents(
+    simulator: IncidentSuggestionAPI,
+    store: DatabaseStore,
+    audit: AuditLog,
+    *,
+    now: datetime,
+    cutoff_event_id: int,
+    minimum_people_per_version: int = 30,
+    max_incomplete_fraction: float = 0.25,
+    validation_sample_size: int = 100,
+    replicates: int = 2_000,
+    final: bool = False,
+) -> None:
+    """Reconcile incident work and evaluate supervisor prompt changes once ready.
+
+    Evidence uses persisted calls, and people seen in both config versions are
+    excluded so a person is never treated as independent in two arms. The
+    minimum sample/completeness values are engineering gates, not business
+    impact targets. A fixed event cutoff is stored with the one decision.
+    """
+    if now.tzinfo is None or cutoff_event_id < 0:
+        raise ValueError("incident runtime requires zoned time and event cutoff")
+    if minimum_people_per_version < 2 or replicates < 100:
+        raise ValueError("incident runtime evidence settings are too small")
+
+    workflows = await simulator.list_workflows()
+    for workflow in workflows:
+        workflow_id = workflow.get("workflow_id")
+        if not isinstance(workflow_id, str) or not workflow_id:
+            continue
+        history = await simulator.get_config_history(workflow_id)
+        current = await simulator.get_workflow_config(workflow_id)
+        current_version = current.get("version")
+        if isinstance(current_version, bool) or not isinstance(current_version, int):
+            continue
+        changes = sorted(
+            (
+                item
+                for item in history
+                if item.get("actor") == "supervisor"
+                and "prompt_version" in item.get("changed_dims", [])
+                and isinstance(item.get("version"), int)
+                and item.get("version") <= current_version
+            ),
+            key=lambda item: item["version"],
+        )
+        for change in changes:
+            version = change["version"]
+            existing = await store.get_incident_for_version(workflow_id, version)
+            if existing is None and version == current_version:
+                await _evaluate_supervisor_prompt_change(
+                    simulator,
+                    store,
+                    audit,
+                    workflow_id=workflow_id,
+                    history=history,
+                    change=change,
+                    now=now,
+                    cutoff_event_id=cutoff_event_id,
+                    minimum_people=minimum_people_per_version,
+                    max_incomplete_fraction=max_incomplete_fraction,
+                    replicates=replicates,
+                    validation_sample_size=validation_sample_size,
+                )
+
+    for incident in await store.list_incidents(limit=1000):
+        if incident.status in {"approval_pending", "approval_submitted"}:
+            await reconcile_incident_approval(
+                simulator, store, audit, incident_id=incident.incident_id
+            )
+        elif incident.status in {
+            "evidence_recorded",
+            "candidates_ready",
+            "candidate_rejected",
+            "candidate_validated",
+            "validation_intent",
+        }:
+            await _submit_incident_candidate(
+                simulator,
+                store,
+                audit,
+                incident_id=incident.incident_id,
+                validation_sample_size=validation_sample_size,
+            )
+        elif incident.status == "applied":
+            await _monitor_if_ready(
+                simulator,
+                store,
+                audit,
+                incident_id=incident.incident_id,
+                now=now,
+                cutoff_event_id=cutoff_event_id,
+                minimum_people=minimum_people_per_version,
+                max_incomplete_fraction=max_incomplete_fraction,
+                replicates=replicates,
+                final=final,
+            )
+
+
+async def _evaluate_supervisor_prompt_change(
+    simulator: IncidentSuggestionAPI,
+    store: DatabaseStore,
+    audit: AuditLog,
+    *,
+    workflow_id: str,
+    history: list[dict[str, Any]],
+    change: dict[str, Any],
+    now: datetime,
+    cutoff_event_id: int,
+    minimum_people: int,
+    max_incomplete_fraction: float,
+    replicates: int,
+    validation_sample_size: int,
+) -> None:
+    version = change["version"]
+    prior = next(
+        (
+            item
+            for item in reversed(history)
+            if isinstance(item.get("version"), int) and item["version"] < version
+        ),
+        None,
+    )
+    changed_at = _parse_timestamp(change.get("applied_at", ""))
+    if prior is None or changed_at is None or now <= changed_at:
+        return
+    prior_version = prior["version"]
+    window_seconds = (now - changed_at).total_seconds()
+    baseline_start = changed_at - timedelta(seconds=window_seconds)
+    baseline = await _incident_monitor_facts(
+        store,
+        workflow_id=workflow_id,
+        config_version=prior_version,
+        start_at=baseline_start,
+        end_at=changed_at,
+        cutoff_event_id=cutoff_event_id,
+        page_size=1000,
+    )
+    observed = await _incident_monitor_facts(
+        store,
+        workflow_id=workflow_id,
+        config_version=version,
+        start_at=changed_at,
+        end_at=now,
+        cutoff_event_id=cutoff_event_id,
+        page_size=1000,
+    )
+    base_by_person, base_complete = _qa_person_outcomes(baseline)
+    post_by_person, post_complete = _qa_person_outcomes(observed)
+    overlap = set(base_by_person) & set(post_by_person)
+    base_by_person = {
+        key: value for key, value in base_by_person.items() if key not in overlap
+    }
+    post_by_person = {
+        key: value for key, value in post_by_person.items() if key not in overlap
+    }
+    if (
+        len(base_by_person) < minimum_people
+        or len(post_by_person) < minimum_people
+        or base_complete < 1 - max_incomplete_fraction
+        or post_complete < 1 - max_incomplete_fraction
+    ):
+        return
+    outcomes = [
+        PersonOutcome(person, "baseline", success, trials)
+        for person, (success, trials) in sorted(base_by_person.items())
+    ] + [
+        PersonOutcome(person, "changed", success, trials)
+        for person, (success, trials) in sorted(post_by_person.items())
+    ]
+    comparison = estimate_rate_difference(
+        outcomes,
+        control_arm="baseline",
+        treatment_arm="changed",
+        seed_key=f"incident:{workflow_id}:{version}:{cutoff_event_id}",
+        replicates=replicates,
+        evidence_threshold=0.0,
+    )
+    harmful = (
+        comparison.estimate > 0 and comparison.p_not_greater_than_threshold <= 0.10
+    )
+    current_config = await simulator.get_workflow_config(workflow_id)
+    config = current_config.get("config")
+    prompt = config.get("prompt_version") if isinstance(config, dict) else None
+    payload: dict[str, object] = {
+        "sufficient": True,
+        "workflow_id": workflow_id,
+        "config_version": version,
+        "baseline_config_version": prior_version,
+        "baseline_window_start": baseline_start.isoformat(),
+        "cutoff_event_id": cutoff_event_id,
+        "change_applied_at": changed_at.isoformat(),
+        "current_prompt_version": prompt,
+        "person_count": len(post_by_person),
+        "baseline_person_count": len(base_by_person),
+        "incomplete_fraction_baseline": 1 - base_complete,
+        "incomplete_fraction_post": 1 - post_complete,
+        "hallucination_rate": sum(
+            success / trials for success, trials in post_by_person.values()
+        )
+        / len(post_by_person),
+        "comparison": {
+            "difference": comparison.estimate,
+            "lower": comparison.lower,
+            "upper": comparison.upper,
+            "p_value": comparison.p_not_greater_than_threshold,
+            "baseline_rate": sum(s / n for s, n in base_by_person.values())
+            / len(base_by_person),
+            "post_rate": sum(s / n for s, n in post_by_person.values())
+            / len(post_by_person),
+            "baseline_people": len(base_by_person),
+            "post_people": len(post_by_person),
+            "overlapping_people_excluded": len(overlap),
+            "harmful": harmful,
+        },
+    }
+    incident_id = (
+        "inc-"
+        + hashlib.sha256(
+            f"{workflow_id}:{version}:{cutoff_event_id}".encode()
+        ).hexdigest()[:32]
+    )
+    status = "evidence_recorded" if harmful else "no_incident_detected"
+    async with store.transaction() as session:
+        _, created = await store.save_incident(
+            session,
+            incident_id=incident_id,
+            workflow_id=workflow_id,
+            trigger_config_version=version,
+            status=status,
+            evidence=payload,
+            timeline=[
+                {
+                    "event": status,
+                    "cutoff_event_id": cutoff_event_id,
+                    "comparison": payload["comparison"],
+                }
+            ],
+        )
+        if created:
+            await audit.append(
+                session,
+                AuditEntry(
+                    action="incident_population_qa_evaluated",
+                    actor="controller",
+                    reason=(
+                        "Fixed-window person-level QA comparison crossed the harm rule"
+                        if harmful
+                        else "Fixed-window person-level QA comparison did not cross the harm rule"
+                    ),
+                    workflow_id=workflow_id,
+                    resource_type="incident",
+                    resource_id=incident_id,
+                    evidence=payload,
+                ),
+            )
+    if created and harmful:
+        await _submit_incident_candidate(
+            simulator,
+            store,
+            audit,
+            incident_id=incident_id,
+            validation_sample_size=validation_sample_size,
+        )
+
+
+def _qa_person_outcomes(facts: list[KpiFact]):
+    totals: dict[str, list[int]] = {}
+    calls = [fact for fact in facts if fact.event_type == "call" and fact.connected]
+    valid = [
+        fact
+        for fact in calls
+        if fact.quality == "valid"
+        and fact.qa_quality == "valid"
+        and fact.person_id
+        and fact.qa_hallucination is not None
+    ]
+    for fact in valid:
+        value = totals.setdefault(fact.person_id, [0, 0])
+        value[0] += int(fact.qa_hallucination)
+        value[1] += 1
+    return totals, (len(valid) / len(calls) if calls else 0.0)
+
+
+async def _submit_incident_candidate(
+    simulator: IncidentSuggestionAPI,
+    store: DatabaseStore,
+    audit: AuditLog,
+    *,
+    incident_id: str,
+    validation_sample_size: int,
+) -> None:
+    incident = await store.get_incident(incident_id)
+    if incident is None:
+        return
+    if incident.status == "candidate_validated":
+        validations = incident.evidence.get("validations", {})
+        if isinstance(validations, dict):
+            passed = sorted(
+                prompt
+                for prompt, value in validations.items()
+                if isinstance(prompt, str)
+                and isinstance(value, dict)
+                and value.get("status") == "passed"
+            )
+            if passed:
+                await submit_governed_prompt_proposal(
+                    simulator,
+                    store,
+                    audit,
+                    incident_id=incident_id,
+                    prompt_version=passed[0],
+                )
+        return
+    if incident.status == "evidence_recorded":
+        suggestion = await request_candidate_suggestions(
+            simulator,
+            store,
+            audit,
+            incident_id=incident_id,
+            problem=(
+                f"Observed a population hallucination-rate increase after supervisor prompt change "
+                f"for workflow {incident.workflow_id}; return alternative prompt candidates."
+            ),
+        )
+        if suggestion.get("status") != "candidates_ready":
+            return
+        incident = await store.get_incident(incident_id)
+        if incident is None:
+            return
+    elif incident.status not in {
+        "candidates_ready",
+        "candidate_rejected",
+        "validation_intent",
+    }:
+        return
+    candidates = sorted(
+        incident.evidence.get("suggestion", {}).get("candidates", []),
+        key=lambda item: item.get("prompt_version", ""),
+    )
+    for candidate in candidates:
+        prompt = candidate.get("prompt_version")
+        if not isinstance(prompt, str):
+            continue
+        result = await validate_incident_candidate(
+            simulator,
+            store,
+            audit,
+            incident_id=incident_id,
+            prompt_version=prompt,
+            sample_size=validation_sample_size,
+        )
+        if result.get("status") == "candidate_validated":
+            await submit_governed_prompt_proposal(
+                simulator,
+                store,
+                audit,
+                incident_id=incident_id,
+                prompt_version=prompt,
+            )
+            return
+        if result.get("status") not in {"candidate_rejected", "validation_failed"}:
+            return
+
+
+async def _monitor_if_ready(
+    simulator: IncidentSuggestionAPI,
+    store: DatabaseStore,
+    audit: AuditLog,
+    *,
+    incident_id: str,
+    now: datetime,
+    cutoff_event_id: int,
+    minimum_people: int,
+    max_incomplete_fraction: float,
+    replicates: int,
+    final: bool,
+) -> None:
+    incident = await store.get_incident(incident_id)
+    if incident is None:
+        return
+    proposal = incident.evidence.get("proposal", {})
+    base_version = proposal.get("base_version")
+    if not isinstance(base_version, int):
+        return
+    history = await simulator.get_config_history(incident.workflow_id)
+    applied = next(
+        (
+            item
+            for item in history
+            if item.get("approval_id") == proposal.get("approval_id")
+            and item.get("proposal_id") == proposal.get("proposal_id")
+        ),
+        None,
+    )
+    prior = next(
+        (item for item in history if item.get("version") == base_version), None
+    )
+    if not applied or not prior:
+        return
+    baseline_version = incident.evidence.get("baseline_config_version", base_version)
+    baseline_history = next(
+        (item for item in history if item.get("version") == baseline_version), None
+    )
+    if baseline_history is None:
+        return
+    start = _parse_timestamp(incident.evidence.get("baseline_window_start", ""))
+    if start is None:
+        start = _parse_timestamp(baseline_history.get("applied_at", ""))
+    changed = _parse_timestamp(applied.get("applied_at", ""))
+    if start is None or changed is None or now <= changed:
+        return
+    baseline = await _incident_monitor_facts(
+        store,
+        workflow_id=incident.workflow_id,
+        config_version=baseline_version,
+        start_at=start,
+        end_at=changed,
+        cutoff_event_id=cutoff_event_id,
+        page_size=1000,
+    )
+    post = await _incident_monitor_facts(
+        store,
+        workflow_id=incident.workflow_id,
+        config_version=applied.get("version"),
+        start_at=changed,
+        end_at=now,
+        cutoff_event_id=cutoff_event_id,
+        page_size=1000,
+    )
+    before, before_quality = _qa_person_outcomes(baseline)
+    after, after_quality = _qa_person_outcomes(post)
+    sufficient_gate = (
+        len(set(before) & set(after)) >= minimum_people
+        and before_quality >= 1 - max_incomplete_fraction
+        and after_quality >= 1 - max_incomplete_fraction
+    )
+    if not sufficient_gate and not final:
+        return
+    if now <= changed:
+        return
+    result = await monitor_applied_prompt(
+        simulator,
+        store,
+        audit,
+        incident_id=incident_id,
+        monitor_end=now,
+        cutoff_event_id=cutoff_event_id,
+        minimum_paired_people=minimum_people,
+        max_incomplete_fraction=max_incomplete_fraction,
+        replicates=replicates,
+    )
+    if result.get("harmful") is True:
+        await propose_monitoring_correction(
+            simulator,
+            store,
+            audit,
+            monitoring_result=result,
+            validation_sample_size=100,
+        )
 
 
 async def _incident_monitor_facts(
