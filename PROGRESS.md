@@ -280,3 +280,10 @@ Known limits: these are synthetic development-host measurements, not `public_03_
 - Added a PostgreSQL restart test that submits and durably records a pending approval, closes the first store, opens a fresh store against the same database, reconciles pending then approved status, applies the exact approved config, closes/reopens again, and verifies the apply operation remains succeeded with one attempt and one `approval_apply_prepared` audit row. Repeated apply returns the persisted terminal result without another remote POST.
 - Existing approval state-machine and safe-apply tests cover rejected, expired, lapsed, lost-response-after-apply and unresolved ambiguous outcomes; those cases do not apply an unapproved change or blindly repeat an ambiguous apply.
 - Focused recovery/governance/incident suite: 28 passed on isolated PostgreSQL. Ruff, formatting, compileall and diff checks passed. The separate-process real simulator approval kill remains for subtask 5.
+
+
+### Chunk 8 subtask 4 ? repeated starts and ambiguous outcomes
+
+- Extended restart coverage: re-submitting the same durable pending proposal reconciles its stable proposal ID without another POST; after apply, a fresh store sees terminal state and does not repeat the apply POST.
+- Extended unresolved apply ambiguity coverage: after the first apply POST has no matching config-history effect, close/reopen PostgreSQL and retry the recovery entry point. The operation remains `reconciliation_required`, with one remote POST and one persisted attempt.
+- Existing tests cover restart-safe event IDs/checkpoints, event conflicts, advance lost-response reconciliation, submission timeout lookup, and rejected/expired/lapsed approvals. Focused real process/governance tests: 10 passed. Ruff, formatting, compileall and diff checks passed.

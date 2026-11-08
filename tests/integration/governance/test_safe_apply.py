@@ -192,6 +192,25 @@ async def test_ambiguous_apply_without_history_halts_without_retry(postgres_stor
         f"approval-apply:{proposal.approval_id}"
     )
     assert intent is not None and intent.status == "reconciliation_required"
+    database_url = os.environ["CONTROLLER_TEST_DATABASE_URL"]
+    await postgres_store.close()
+    restarted = DatabaseStore(database_url)
+    await restarted.initialize()
+    await restarted.migrate()
+    async with client:
+        with pytest.raises(ProposalReconciliationRequired, match="retry is unsafe"):
+            await apply_approved_proposal(
+                client,
+                restarted,
+                AuditLog(restarted),
+                proposal.proposal_id,
+            )
+    assert state["posts"] == 1
+    intent = await restarted.get_outbox_operation(
+        f"approval-apply:{proposal.approval_id}"
+    )
+    assert intent is not None and intent.status == "reconciliation_required"
+    await restarted.close()
 
 
 @pytest.mark.anyio

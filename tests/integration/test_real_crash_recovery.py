@@ -243,6 +243,9 @@ async def test_pending_approval_survives_store_restart_and_applies_once(postgres
     await restarted.initialize()
     await restarted.migrate()
     audit = AuditLog(restarted)
+    repeated_submission = await submit_proposal(remote, restarted, audit, proposal)
+    assert repeated_submission["status"] == "pending"
+    assert remote.approval_posts == 1
     assert (
         await poll_approval(remote, restarted, audit, proposal.proposal_id, max_polls=1)
         == ProposalStatus.PENDING
