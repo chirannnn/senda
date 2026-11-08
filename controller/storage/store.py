@@ -100,6 +100,10 @@ class ExperimentDecisionConflictError(RuntimeError):
     """A stable experiment ID was reused for different inputs or evidence."""
 
 
+class IncidentStateConflictError(RuntimeError):
+    """A concurrent incident transition already claimed the current phase."""
+
+
 class DatabaseStore:
     """Owns the async engine and exposes explicit transaction scopes."""
 
@@ -692,14 +696,24 @@ class DatabaseStore:
         incident_id: str,
         *,
         status: str,
+        expected_status: str | None = None,
         evidence: dict[str, object] | None = None,
         timeline_entry: dict[str, object] | None = None,
     ) -> IncidentRecord:
         """Persist one state transition and append its actual timeline entry."""
         self.require_transaction(session)
-        record = await session.get(IncidentRecord, incident_id)
+        statement = (
+            select(IncidentRecord)
+            .where(IncidentRecord.incident_id == incident_id)
+            .with_for_update()
+        )
+        record = await session.scalar(statement)
         if record is None:
             raise ValueError(f"unknown incident {incident_id!r}")
+        if expected_status is not None and record.status != expected_status:
+            raise IncidentStateConflictError(
+                f"incident {incident_id!r} is {record.status!r}, expected {expected_status!r}"
+            )
         record.status = status
         if evidence is not None:
             record.evidence = evidence

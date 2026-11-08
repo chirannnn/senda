@@ -6,10 +6,27 @@ import hashlib
 import math
 import random
 from dataclasses import asdict, dataclass
+from typing import Any, Protocol
 
+from controller.errors import AmbiguousPostError, SimulatorError, SimulatorHTTPError
 from controller.storage.audit import AuditEntry, AuditLog
 from controller.storage.models import KpiFact
-from controller.storage.store import DatabaseStore
+from controller.storage.store import DatabaseStore, IncidentStateConflictError
+
+
+class IncidentSuggestionAPI(Protocol):
+    """Documented read and one-shot suggestion operations used by incident response."""
+
+    async def get_state(self) -> dict[str, Any]: ...
+
+    async def list_workflows(self) -> list[dict[str, Any]]: ...
+
+    async def get_workflow_config(self, workflow_id: str) -> dict[str, Any]: ...
+
+    async def suggest_fixes(self, workflow_id: str, problem: str) -> dict[str, Any]: ...
+
+
+SUGGESTION_CREDIT_COST = 3.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -174,6 +191,306 @@ async def persist_incident_evidence(
     return incident_id
 
 
+async def request_candidate_suggestions(
+    simulator: IncidentSuggestionAPI,
+    store: DatabaseStore,
+    audit: AuditLog,
+    *,
+    incident_id: str,
+    problem: str,
+) -> dict[str, object]:
+    """Request one credit-checked LLM suggestion response with durable no-retry intent."""
+    if not isinstance(problem, str) or not problem.strip():
+        raise ValueError("a non-empty problem description is required")
+    incident = await store.get_incident(incident_id)
+    if incident is None:
+        raise ValueError(f"unknown incident {incident_id!r}")
+    if incident.status == "suggestion_intent":
+        return await _incident_transition(
+            store,
+            audit,
+            incident_id,
+            status="suggestion_ambiguous",
+            reason="A prior suggestion request has durable intent but no stored response; no lookup API exists, so it was not retried",
+            entry={"event": "suggestion_ambiguous", "manual_review_required": True},
+        )
+    if incident.status != "evidence_recorded" or not incident.evidence.get(
+        "sufficient"
+    ):
+        return {
+            "status": incident.status,
+            "reason": "incident evidence is not eligible",
+        }
+
+    current = await simulator.get_workflow_config(incident.workflow_id)
+    current_version = current.get("version")
+    workflow = next(
+        (
+            item
+            for item in await simulator.list_workflows()
+            if item.get("workflow_id") == incident.workflow_id
+        ),
+        None,
+    )
+    options = workflow.get("options") if isinstance(workflow, dict) else None
+    prompt_options = (
+        options.get("prompt_version") if isinstance(options, dict) else None
+    )
+    current_config = current.get("config")
+    if (
+        isinstance(current_version, bool)
+        or not isinstance(current_version, int)
+        or current_version != incident.trigger_config_version
+        or not isinstance(current_config, dict)
+        or not isinstance(current_config.get("prompt_version"), str)
+        or not isinstance(prompt_options, list)
+        or any(not isinstance(item, str) for item in prompt_options)
+        or current_config["prompt_version"] not in prompt_options
+    ):
+        return await _incident_transition(
+            store,
+            audit,
+            incident_id,
+            status="stale_before_suggestion",
+            reason="Workflow config version or prompt allowlist changed before candidate generation",
+            entry={
+                "event": "stale_before_suggestion",
+                "expected_config_version": incident.trigger_config_version,
+                "current_config_version": current.get("version"),
+            },
+        )
+
+    state = await simulator.get_state()
+    remaining = state.get("credits_remaining")
+    if (
+        isinstance(remaining, bool)
+        or not isinstance(remaining, (int, float))
+        or not math.isfinite(remaining)
+        or remaining < 0
+    ):
+        raise ValueError("simulator state has no valid credits_remaining balance")
+    if remaining < SUGGESTION_CREDIT_COST:
+        return await _incident_transition(
+            store,
+            audit,
+            incident_id,
+            status="insufficient_credits",
+            reason="Available simulator credits are below the documented suggestion cost",
+            evidence_update={
+                **incident.evidence,
+                "suggestion_credit_check": {
+                    "available_before": float(remaining),
+                    "documented_cost": SUGGESTION_CREDIT_COST,
+                    "spent": 0,
+                },
+            },
+            entry={
+                "event": "insufficient_credits",
+                "available_before": float(remaining),
+                "documented_cost": SUGGESTION_CREDIT_COST,
+            },
+        )
+
+    request_evidence = {
+        **incident.evidence,
+        "suggestion_request": {
+            "config_version": incident.trigger_config_version,
+            "current_prompt_version": current_config["prompt_version"],
+            "available_credits_before": float(remaining),
+            "documented_cost": SUGGESTION_CREDIT_COST,
+            "problem": problem,
+        },
+    }
+    try:
+        await _incident_transition(
+            store,
+            audit,
+            incident_id,
+            status="suggestion_intent",
+            expected_status="evidence_recorded",
+            reason="Persisted one-shot suggestion intent after checking simulator credits",
+            evidence_update=request_evidence,
+            entry={
+                "event": "suggestion_intent",
+                "config_version": incident.trigger_config_version,
+                "available_credits_before": float(remaining),
+                "documented_cost": SUGGESTION_CREDIT_COST,
+            },
+        )
+    except IncidentStateConflictError:
+        latest = await store.get_incident(incident_id)
+        return {
+            "status": latest.status if latest is not None else "unknown",
+            "reason": "another request already claimed or completed this incident phase",
+        }
+    try:
+        response = await simulator.suggest_fixes(incident.workflow_id, problem)
+    except AmbiguousPostError as exc:
+        return await _incident_transition(
+            store,
+            audit,
+            incident_id,
+            status="suggestion_ambiguous",
+            reason="Suggestion POST outcome is ambiguous; the simulator provides no lookup endpoint",
+            entry={"event": "suggestion_ambiguous", "reason": exc.reason},
+        )
+    except SimulatorHTTPError as exc:
+        if exc.status_code == 402:
+            return await _incident_transition(
+                store,
+                audit,
+                incident_id,
+                status="insufficient_credits",
+                reason="Suggestion endpoint returned HTTP 402; paid calls stop for this incident",
+                evidence_update={
+                    **request_evidence,
+                    "suggestion_credit_check": {
+                        "available_before": float(remaining),
+                        "documented_cost": SUGGESTION_CREDIT_COST,
+                        "spent": 0,
+                        "http_status": 402,
+                    },
+                },
+                entry={"event": "suggestion_402", "available_before": float(remaining)},
+            )
+        after_error = await _credits_if_available(simulator)
+        return await _incident_transition(
+            store,
+            audit,
+            incident_id,
+            status="suggestion_failed",
+            reason="Simulator rejected the suggestion request; no retry was attempted",
+            evidence_update={
+                **request_evidence,
+                "suggestion_failure": {
+                    "http_status": exc.status_code,
+                    "credits_remaining_after": after_error,
+                    "credits_used_observed": (
+                        float(remaining) - after_error
+                        if after_error is not None
+                        else None
+                    ),
+                },
+            },
+            entry={"event": "suggestion_failed", "http_status": exc.status_code},
+        )
+    except SimulatorError as exc:
+        after_error = await _credits_if_available(simulator)
+        return await _incident_transition(
+            store,
+            audit,
+            incident_id,
+            status="suggestion_response_invalid",
+            reason="Suggestion response could not be validated; candidates were discarded and no retry was attempted",
+            evidence_update={
+                **request_evidence,
+                "suggestion_failure": {
+                    "error_type": type(exc).__name__,
+                    "credits_remaining_after": after_error,
+                    "credits_used_observed": (
+                        float(remaining) - after_error
+                        if after_error is not None
+                        else None
+                    ),
+                },
+            },
+            entry={
+                "event": "suggestion_response_invalid",
+                "error_type": type(exc).__name__,
+                "credits_remaining_after": after_error,
+            },
+        )
+
+    candidates = response["suggestions"]
+    allowed = set(prompt_options)
+    candidates = [
+        candidate
+        for candidate in candidates
+        if candidate["prompt_version"] in allowed
+        and candidate["prompt_version"] != current_config["prompt_version"]
+        and len(candidate["summary"]) <= 500
+    ]
+    after = response["credits_remaining"]
+    used = float(remaining) - float(after)
+    if used < 0:
+        return await _incident_transition(
+            store,
+            audit,
+            incident_id,
+            status="suggestion_response_invalid",
+            reason="Simulator response reported more credits than the pre-call balance",
+            entry={"event": "suggestion_response_invalid", "credits_remaining": after},
+        )
+    result = {
+        **request_evidence,
+        "suggestion": {
+            "candidates": candidates,
+            "available_before": float(remaining),
+            "available_after": float(after),
+            "credits_used_observed": used,
+            "documented_cost": SUGGESTION_CREDIT_COST,
+            "config_version": incident.trigger_config_version,
+        },
+    }
+    status = "candidates_ready" if candidates else "no_permitted_candidates"
+    return await _incident_transition(
+        store,
+        audit,
+        incident_id,
+        status=status,
+        reason=(
+            "Stored allowlisted candidate suggestions and observed credit balance"
+            if candidates
+            else "Suggestion response contained no candidate permitted by current workflow options"
+        ),
+        evidence_update=result,
+        entry={
+            "event": status,
+            "candidate_count": len(candidates),
+            "credits_used_observed": used,
+            "credits_remaining": float(after),
+        },
+    )
+
+
+async def _incident_transition(
+    store: DatabaseStore,
+    audit: AuditLog,
+    incident_id: str,
+    *,
+    status: str,
+    expected_status: str | None = None,
+    reason: str,
+    entry: dict[str, object],
+    evidence_update: dict[str, object] | None = None,
+) -> dict[str, object]:
+    incident = await store.get_incident(incident_id)
+    if incident is None:
+        raise ValueError(f"unknown incident {incident_id!r}")
+    async with store.transaction() as session:
+        await store.update_incident(
+            session,
+            incident_id,
+            status=status,
+            expected_status=expected_status,
+            evidence=evidence_update,
+            timeline_entry=entry,
+        )
+        await audit.append(
+            session,
+            AuditEntry(
+                action="incident_phase_changed",
+                actor="controller",
+                reason=reason,
+                workflow_id=incident.workflow_id,
+                resource_type="incident",
+                resource_id=incident_id,
+                evidence={"status": status, **entry},
+            ),
+        )
+    return {"status": status, **entry}
+
+
 def _quantile(values: list[float], probability: float) -> float:
     index = probability * (len(values) - 1)
     lower = math.floor(index)
@@ -181,3 +498,19 @@ def _quantile(values: list[float], probability: float) -> float:
     if lower == upper:
         return values[lower]
     return values[lower] + (values[upper] - values[lower]) * (index - lower)
+
+
+async def _credits_if_available(simulator: IncidentSuggestionAPI) -> float | None:
+    try:
+        state = await simulator.get_state()
+        value = state.get("credits_remaining")
+    except SimulatorError:
+        return None
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, (int, float))
+        or not math.isfinite(value)
+        or value < 0
+    ):
+        return None
+    return float(value)

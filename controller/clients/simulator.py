@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import math
 import random
 import tempfile
 from collections.abc import Awaitable, Callable, Iterator
@@ -156,6 +157,33 @@ class SimulatorClient:
         ):
             raise SimulatorError("workflow config history response is malformed")
         return payload
+
+    async def suggest_fixes(self, workflow_id: str, problem: str) -> dict[str, Any]:
+        """Request LLM candidates once; the caller must preflight credits and treat output as untrusted."""
+        if not workflow_id or not isinstance(problem, str) or not problem.strip():
+            raise ValueError("workflow ID and incident problem are required")
+        path = "/llm/suggest-fixes"
+        try:
+            response = await self._require_client().post(
+                path, json={"workflow_id": workflow_id, "problem": problem}
+            )
+        except httpx.RequestError as exc:
+            raise AmbiguousPostError(
+                path, f"transport failure ({type(exc).__name__})"
+            ) from None
+        if 500 <= response.status_code <= 599:
+            raise AmbiguousPostError(
+                path,
+                f"server returned HTTP {response.status_code}; no lookup API is documented",
+            )
+        self._raise_for_status(response, path)
+        try:
+            payload = response.json()
+        except ValueError:
+            raise AmbiguousPostError(
+                path, "successful response was not valid JSON"
+            ) from None
+        return _validate_suggestions(payload)
 
     async def submit_approval(self, payload: dict[str, Any]) -> dict[str, Any]:
         """Send one approval request; ambiguous outcomes are never retried here."""
@@ -419,3 +447,37 @@ def _validate_approval(value: object) -> dict[str, Any]:
     ):
         raise SimulatorError("approval response has invalid changed_dims")
     return value
+
+
+def _validate_suggestions(value: object) -> dict[str, Any]:
+    """Validate the documented suggestion envelope without trusting prompt choices."""
+    if not isinstance(value, dict) or set(value) != {
+        "suggestions",
+        "credits_remaining",
+    }:
+        raise SimulatorError("suggestion response has an unexpected schema")
+    suggestions = value["suggestions"]
+    credits = value["credits_remaining"]
+    if (
+        not isinstance(suggestions, list)
+        or len(suggestions) > 3
+        or isinstance(credits, bool)
+        or not isinstance(credits, (int, float))
+        or not math.isfinite(credits)
+        or credits < 0
+    ):
+        raise SimulatorError("suggestion response has invalid candidates or credits")
+    clean: list[dict[str, str]] = []
+    for item in suggestions:
+        if not isinstance(item, dict) or set(item) != {"prompt_version", "summary"}:
+            raise SimulatorError("suggestion candidate has an unexpected schema")
+        prompt_version, summary = item["prompt_version"], item["summary"]
+        if (
+            not isinstance(prompt_version, str)
+            or not prompt_version.strip()
+            or not isinstance(summary, str)
+            or not summary.strip()
+        ):
+            raise SimulatorError("suggestion candidate is malformed")
+        clean.append({"prompt_version": prompt_version, "summary": summary})
+    return {"suggestions": clean, "credits_remaining": float(credits)}

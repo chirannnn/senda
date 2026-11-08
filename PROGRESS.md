@@ -246,7 +246,7 @@ Known limits: these are synthetic development-host measurements, not `public_03_
 
 | Subtask | Status | Validation | Commit |
 |---|---|---|---|
-| 1. Incident evidence | COMPLETE | 11 focused unit tests and 2 isolated PostgreSQL storage tests passed; migration 0008 applied; Ruff, format, compileall and diff check passed | this subtask commit |
+| 1. Incident evidence | COMPLETE | 11 focused unit tests and 2 isolated PostgreSQL storage tests passed; migration 0008 applied; Ruff, format, compileall and diff check passed | `3d28f68` |
 | 2. Credit-aware LLM suggestion | NOT STARTED | — | — |
 | 3. Candidate validation | NOT STARTED | — | — |
 | 4. Governed prompt proposal | NOT STARTED | — | — |

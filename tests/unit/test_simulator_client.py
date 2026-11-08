@@ -183,6 +183,96 @@ async def test_methods_require_open_client_and_advance_requires_valid_tick():
 
 
 @pytest.mark.anyio
+async def test_suggestion_uses_documented_one_shot_endpoint_and_validates_schema():
+    attempts = []
+
+    def handler(request):
+        attempts.append((request.method, request.url.path, request.read()))
+        return httpx.Response(
+            200,
+            json={
+                "suggestions": [
+                    {"prompt_version": "P2", "summary": "Candidate prompt"}
+                ],
+                "credits_remaining": 7,
+            },
+        )
+
+    client = SimulatorClient(_settings(), transport=httpx.MockTransport(handler))
+    async with client:
+        result = await client.suggest_fixes("wf-1", "Observed QA elevated")
+    assert result == {
+        "suggestions": [{"prompt_version": "P2", "summary": "Candidate prompt"}],
+        "credits_remaining": 7.0,
+    }
+    assert attempts == [
+        (
+            "POST",
+            "/llm/suggest-fixes",
+            b'{"workflow_id":"wf-1","problem":"Observed QA elevated"}',
+        )
+    ]
+
+
+@pytest.mark.anyio
+async def test_suggestion_post_timeout_is_ambiguous_and_never_retried():
+    attempts = 0
+
+    def handler(request):
+        nonlocal attempts
+        attempts += 1
+        raise httpx.ReadTimeout("suggestion response lost", request=request)
+
+    client = SimulatorClient(_settings(), transport=httpx.MockTransport(handler))
+    async with client:
+        with pytest.raises(AmbiguousPostError):
+            await client.suggest_fixes("wf-1", "Observed QA elevated")
+    assert attempts == 1
+
+
+@pytest.mark.anyio
+async def test_suggestion_http_402_is_not_retried():
+    attempts = 0
+
+    def handler(request):
+        nonlocal attempts
+        attempts += 1
+        return httpx.Response(402)
+
+    client = SimulatorClient(_settings(), transport=httpx.MockTransport(handler))
+    async with client:
+        with pytest.raises(SimulatorHTTPError) as exc_info:
+            await client.suggest_fixes("wf-1", "Observed QA elevated")
+    assert exc_info.value.status_code == 402
+    assert attempts == 1
+
+
+@pytest.mark.anyio
+async def test_suggestion_rejects_unexpected_candidate_fields():
+    client = SimulatorClient(
+        _settings(),
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(
+                200,
+                json={
+                    "suggestions": [
+                        {
+                            "prompt_version": "P2",
+                            "summary": "Candidate",
+                            "approved": True,
+                        }
+                    ],
+                    "credits_remaining": 7,
+                },
+            )
+        ),
+    )
+    async with client:
+        with pytest.raises(SimulatorError, match="unexpected schema"):
+            await client.suggest_fixes("wf-1", "Observed QA elevated")
+
+
+@pytest.mark.anyio
 async def test_governance_reads_and_approval_submission_use_documented_routes():
     approval = {
         "approval_id": "apr_00001",
