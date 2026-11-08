@@ -142,14 +142,22 @@ async def test_count_insert_avoids_returning_ids_and_validates_replay(
 
         statements.clear()
         async with store.transaction() as session:
-            assert await store.insert_events_count(session, batch) == 0
+            reordered_json_batch = [
+                _event(
+                    920121,
+                    payload={"opaque": {"value": "kept"}, "event_id": 920121},
+                ),
+                batch[1],
+            ]
+            assert await store.insert_events_count(session, reordered_json_batch) == 0
         replay_selects = [
             sql
             for sql in statements
             if sql.lstrip().startswith("select") and "simulator_events" in sql
         ]
         assert len(replay_selects) == 1
-        assert "event_id in" in replay_selects[0]
+        assert "left join simulator_events" in replay_selects[0]
+        assert "::jsonb" in replay_selects[0]
     finally:
         sqlalchemy_event.remove(
             store.engine.sync_engine, "before_cursor_execute", record_statement
@@ -175,6 +183,15 @@ async def test_count_insert_detects_conflicts_and_rolls_back_new_rows(postgres_s
 
     assert await store.get_event(920132) is None
     assert await store.get_checkpoint("simulator") is None
+
+
+@pytest.mark.anyio
+async def test_count_insert_deduplicates_identical_ids_within_a_batch(postgres_store):
+    store = postgres_store
+    event = _event(920141)
+    async with store.transaction() as session:
+        assert await store.insert_events_count(session, [event, event]) == 1
+    assert await store.get_event(event.event_id) is not None
 
 
 @pytest.mark.anyio

@@ -75,6 +75,7 @@ _KPI_FACT_COPY_COLUMNS = (
     "qa_flow_adherence",
     "qa_quality",
 )
+_EVENT_COPY_COLUMNS = ("event_id", "chunk_number", "kind", "payload")
 
 
 @dataclass(frozen=True, slots=True)
@@ -346,23 +347,45 @@ class DatabaseStore:
                 )
             event_by_id[event.event_id] = event
 
-        statement = (
-            postgresql_insert(SimulatorEvent)
-            .values(
-                [
-                    {
-                        "event_id": event.event_id,
-                        "chunk_number": event.chunk_number,
-                        "kind": event.kind,
-                        "payload": event.payload,
-                    }
-                    for event in events
-                ]
+        with _observe_elapsed(telemetry, "event_stage_payload_build_seconds"):
+            rows = [
+                (
+                    event.event_id,
+                    event.chunk_number,
+                    event.kind,
+                    json.dumps(event.payload),
+                )
+                for event in event_by_id.values()
+            ]
+        with _observe_elapsed(telemetry, "event_stage_create_seconds"):
+            await session.execute(
+                text(
+                    "CREATE TEMP TABLE IF NOT EXISTS _controller_event_stage "
+                    "(LIKE simulator_events INCLUDING DEFAULTS) ON COMMIT DROP"
+                )
             )
-            .on_conflict_do_nothing(index_elements=[SimulatorEvent.event_id])
-        )
+        with _observe_elapsed(telemetry, "event_stage_reset_seconds"):
+            await session.execute(
+                text("TRUNCATE TABLE pg_temp._controller_event_stage")
+            )
+        connection = await session.connection()
+        raw_connection = await connection.get_raw_connection()
+        driver_connection = raw_connection.driver_connection
         with _observe_elapsed(telemetry, "event_insert_execute_seconds"):
-            result = await session.execute(statement)
+            with _observe_elapsed(telemetry, "event_copy_execute_seconds"):
+                await driver_connection.copy_records_to_table(
+                    "_controller_event_stage",
+                    records=rows,
+                    columns=list(_EVENT_COPY_COLUMNS),
+                )
+            merge_statement = text(
+                "INSERT INTO simulator_events (event_id, chunk_number, kind, payload) "
+                "SELECT event_id, chunk_number, kind, payload "
+                "FROM pg_temp._controller_event_stage "
+                "ON CONFLICT (event_id) DO NOTHING"
+            )
+            with _observe_elapsed(telemetry, "event_stage_merge_execute_seconds"):
+                result = await session.execute(merge_statement)
         inserted_count = result.rowcount
         if (
             inserted_count is None
@@ -375,28 +398,29 @@ class DatabaseStore:
 
         if inserted_count < len(event_by_id):
             with _observe_elapsed(telemetry, "event_conflict_lookup_seconds"):
-                persisted = (
+                mismatch = (
                     await session.execute(
-                        select(SimulatorEvent).where(
-                            SimulatorEvent.event_id.in_(event_by_id)
+                        text(
+                            "SELECT s.event_id, e.event_id IS NULL AS missing "
+                            "FROM pg_temp._controller_event_stage AS s "
+                            "LEFT JOIN simulator_events AS e USING (event_id) "
+                            "WHERE e.event_id IS NULL "
+                            "OR e.chunk_number IS DISTINCT FROM s.chunk_number "
+                            "OR e.kind IS DISTINCT FROM s.kind "
+                            "OR e.payload::jsonb IS DISTINCT FROM s.payload::jsonb "
+                            "ORDER BY s.event_id LIMIT 1"
                         )
                     )
-                ).scalars()
-            persisted_by_id = {record.event_id: record for record in persisted}
-            for event_id, event in event_by_id.items():
-                existing = persisted_by_id.get(event_id)
-                if existing is None:
+                ).first()
+            if mismatch is not None:
+                event_id, missing = mismatch
+                if missing:
                     raise RuntimeError(
                         f"event ID {event_id} disappeared during conflict validation"
                     )
-                if (
-                    existing.chunk_number != event.chunk_number
-                    or existing.kind != event.kind
-                    or existing.payload != event.payload
-                ):
-                    raise EventConflictError(
-                        f"event ID {event_id} was previously stored with different content"
-                    )
+                raise EventConflictError(
+                    f"event ID {event_id} was previously stored with different content"
+                )
         return inserted_count
 
     async def get_event(self, event_id: int) -> SimulatorEvent | None:

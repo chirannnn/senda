@@ -97,6 +97,11 @@ async def test_history_and_live_chunks_persist_with_global_order_and_id_gaps(
     assert metrics["histograms"]["event_chunk_commit_seconds"]["count"] == 2
     for metric_name in (
         "event_insert_execute_seconds",
+        "event_stage_create_seconds",
+        "event_stage_reset_seconds",
+        "event_stage_payload_build_seconds",
+        "event_copy_execute_seconds",
+        "event_stage_merge_execute_seconds",
         "event_checkpoint_update_seconds",
         "event_chunk_commit_seconds",
     ):

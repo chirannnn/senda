@@ -465,3 +465,51 @@ full-run impact is unverified: the 50-minute target cannot be claimed without a
 permitted full public run. Other KPI SQL/index changes, larger pages, event
 persistence changes, and concurrency are assessed separately below/next;
 constraints and the ordered cursor remain in place.
+
+### Streamed event persistence: COPY staging
+
+The streamed ingestion path now uses PostgreSQL COPY into a transaction-local
+temporary table, followed by one `INSERT ... SELECT ... ON CONFLICT (event_id)
+DO NOTHING`. Fresh inserts no longer need to bind every event as a wide VALUES
+statement. If IDs conflict, one bounded set-based join verifies the stored
+chunk, kind, and JSONB payload. JSONB comparison treats object-key order as
+irrelevant, matching JSON object semantics. Duplicate identical IDs within a
+single page are deduplicated after the existing conflict validation; different
+content for one ID still raises `EventConflictError`. The stage and final event
+write remain within the existing chunk transaction with checkpoint updates.
+The ID-returning API remains unchanged.
+
+Five alternating 1,000-event chunk trials on the isolated synthetic PostgreSQL
+microbenchmark database compared the prior `commit_chunk_stream` path with the
+current production method. Both variants included two 500-event batches and
+the same checkpoint transaction:
+
+| Path | Median chunk wall time | Median event SQL execution | Median commit |
+|---|---:|---:|---:|
+| Previous multi-row persistence | 74.300 ms | 58.068 ms | about 1.178 ms |
+| COPY stage and set-based merge | 23.658 ms | about 10.1 ms | about 2.1 ms |
+
+The measured fixture was about 68.2% faster (3.14x) on the complete chunk
+method. The first call to the new path was cold (74.044 ms), including about
+43 ms to create its temp table; the four following chunks ranged from 21.466 to
+26.129 ms. COPY itself had a warm median near 4.15 ms, merge near 5.9 ms, and
+stage reset near 3.8 ms. These are local, small-fixture timings and do not
+predict full-run throughput. The fixture includes JSON payload serialization,
+but not production-scale concurrent database load or cache pressure.
+
+Focused storage and ingestion correctness tests passed (**29 passed**),
+including replay with reordered JSON object keys, same-batch duplicate IDs,
+conflicting replay, and transaction rollback. The full isolated PostgreSQL
+suite passed (**306 passed**). Ruff, formatting, compileall, Alembic checks,
+and `git diff --check` passed. No full or partial load test was run. Existing
+benchmark evidence and databases were not changed; the isolated microbenchmark
+database is retained.
+
+Event insertion SQL is now substantially cheaper in the controlled fixture,
+but old and new paths have not been compared on a complete public workload.
+KPI fact insertion remains the largest measured historical cost. PostgreSQL
+query-specific waits and server-side query attribution remain unavailable
+without `pg_stat_statements`; no shared PostgreSQL configuration was changed.
+No additional index removal, batch-size change, or concurrent writer is
+justified by current evidence. The ordered ingestion cursor and single
+transaction per chunk remain intentional correctness boundaries.
