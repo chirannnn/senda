@@ -4,7 +4,7 @@
 
 Build a single-process controller that runs `./run.sh <SIM_URL>` to completion, consumes only the simulator HTTP contract, optimizes each workflow's declared primary KPI while protecting its separate guardrail, submits every controller-initiated customer-facing change through governance, and keeps a restart-safe audit trail. The mandatory delivery floor is unattended `public_01_dev` and `public_02_incidents`, C12 auditability, constraint compliance, and completed `SUBMISSION.md`. Other capabilities are scoped below.
 
-This reviewed plan is the implementation specification. Chunks 1 through 8 are complete. The statistical operating policy is documented in `docs/DECISION_POLICY.md`; optional capability scope remains unapproved until review. The approved infrastructure direction is Python 3.12 locally in `.venv`, PostgreSQL 18 in Docker for local development with a persistent named volume, SQLAlchemy async + asyncpg, and Alembic. If an assessment database is provided at execution, use it; otherwise use the configured local development PostgreSQL environment.
+This reviewed plan is the implementation specification. Chunks 1 through 9 are complete; Chunk 10 is NOT STARTED. The statistical operating policy is documented in `docs/DECISION_POLICY.md`; optional capability scope remains unapproved until review. The approved infrastructure direction is Python 3.12 locally in `.venv`, PostgreSQL 18 in Docker for local development with a persistent named volume, SQLAlchemy async + asyncpg, and Alembic. If an assessment database is provided at execution, use it; otherwise use the configured local development PostgreSQL environment.
 
 ## 2. Repository findings and verified contract
 
@@ -131,7 +131,7 @@ Persist incident/proposal states so restart recovers every phase. Never infer su
 
 ## 11. Incremental implementation chunks
 
-Current status: Chunks 1-8 are complete; Chunks 9 and 10 have not started. The sections below preserve the implementation plan and acceptance criteria. Paths were planned new files unless existing files are named. Never modify `sim/`.
+Current status: Chunks 1-9 are complete; Chunk 10 has not started. The sections below preserve the implementation plan and acceptance criteria. Paths were planned new files unless existing files are named. Never modify `sim/`.
 
 ### Current chunk status
 
@@ -244,6 +244,9 @@ Current status: Chunks 1-8 are complete; Chunks 9 and 10 have not started. The s
 - **Unit:** metrics formulas/bounded memory. **Integration/failure:** load run, API interruption, DB pressure.
 - **Acceptance:** report environment and measurements; explicitly pass/fail SRE one simulated day under 10 wall minutes; no fabricated result. Other memory/DB ceilings are UNVERIFIED pending host budget.
 - **Expected:** `reports/public_03_load.md` includes raw metadata, formulas, results.
+- **Actual public run:** completed 7,200 simulated minutes in 5,878.203 wall seconds; 9,737,439 events and valid facts persisted; 1,656.962 events/s; 181-minute simulated ingestion lag; 53.784-second latest-event persistence lag; database grew by 9,433,006,080 bytes. The `<600 wall seconds per simulated day` SRE target **failed** at 1,175.641 seconds/day.
+- **Measurement caveat:** the original Windows process sampler measured the Python launcher shim, so whole-run worker CPU and peak RSS are unknown. `reports/public_03_load_review.md` documents the issue and the subsequent tested process-tree sampler fix; the finished scenario was not rerun after that fix. The original report and raw evidence remain unchanged.
+- **Verification:** full isolated PostgreSQL suite passed (281 tests); Ruff, formatting, compileall, Alembic upgrade/check, and diff check passed. No Chunk 10 work is included.
 - **Commit:** `perf: measure and report controller load behavior`.
 - **PROGRESS:** workload, command, results, bottleneck.
 
@@ -283,7 +286,7 @@ Current status: Chunks 1-8 are complete; Chunks 9 and 10 have not started. The s
 - **Safety:** DB/API backpressure; no checkpoint past missing chunk; no policy bypass; degraded operation explicit.
 - **Measurements:** committed unique events/wall second; separate simulated-minute lag from wall processing delay; interval throughput/backlog; OS peak RSS; DB bytes before/after and bytes/event; decision latency/count; API/DB errors/retries; credit spend/remain. Record host CPU/RAM/runtime/store. Measure SRE target of one simulated day under 10 wall minutes as pass/fail. No fixed five-day wall target. No achieved performance claimed before run.
 - **Success:** chunk continuity/reconciliation, bounded memory, no duplicate effects, measured failure behavior and 10× bottleneck. Acceptable memory/DB ceilings are UNVERIFIED until host budget is verified.
-- **Evidence:** `reports/public_03_load.md`, commands, formulas, run metadata, raw results, audit summary/failure injection.
+- **Evidence:** `reports/public_03_load.md`, `reports/public_03_load_review.md`, and the associated JSONL controller log/sample files. The run completed but failed the SRE time target; CPU and peak RSS are unverified due the Windows launcher measurement defect. The fix applies to future measurements only.
 
 ## 13. Stakeholder responses for `SUBMISSION.md`
 

@@ -1,10 +1,10 @@
 # Progress Tracking â€” Outcome-First Agent Loop
 
-## Overall status: COMPLETE THROUGH CHUNK 8
+## Overall status: COMPLETE THROUGH CHUNK 9
 
-**Current phase:** Chunk 9 load and observability in progress
-**Current chunk:** 9 - Load and observability (in progress)
-**Current next action:** Chunk 9 subtask 4 - run and report the public load scenario if resource-safe.
+**Current phase:** Chunk 9 load and observability complete
+**Current chunk:** 9 - Load and observability (complete)
+**Current next action:** Chunk 10 - Submission and final grading (NOT STARTED)
 
 ## Implementation progress
 
@@ -18,7 +18,7 @@
 | 6 | Statistical comparison | COMPLETE | `7a3d228`, `eef6137`, `ecb6d92`, `dba33bf`, `faca570` |
 | 7 | Public incident workflow | COMPLETE | `3d28f68`, `7a4dadf`, `88f71bc`, `aa59820`, `ade9e79`, `4a0f257` |
 | 8 | Crash recovery demonstration | COMPLETE | `7222007`, `b2ef987`, `3b3a521`, `9f6f61b`, `82ed4c7`, `6e11334` |
-| 9 | Load and observability | IN PROGRESS | see Chunk 9 subtask progress below |
+| 9 | Load and observability | COMPLETE | `a1dab4d`, `fa5845a`, `41e52a0`, `74b43eb`; final evidence commit below |
 | 10 | Submission and final grading | NOT STARTED | planned |
 
 ## Chunk 6 subtask progress
@@ -157,10 +157,10 @@ Subtask 4 starts the simulator through documented readiness/state/workflow reads
 
 | Scenario/check | Result | Evidence |
 |---|---|---|
-| public_01_dev | NOT RUN | â€” |
-| public_02_incidents | NOT RUN | â€” |
-| public_03_load | NOT RUN | â€” |
-| Crash recovery | NOT RUN | â€” |
+| public_01_dev | COMPLETE | Finished at minute 11,520 with 297,024 events; grader reported zero applied changes and 0.0% KPI delta; see Chunk 6 results above |
+| public_02_incidents | COMPLETE | Finished at minute 14,400; governed prompt change approved/applied and rated beneficial; see Chunk 7 results above |
+| public_03_load | COMPLETE | Completed 7,200 simulated minutes; SRE time target failed; see `reports/public_03_load.md` and `reports/public_03_load_review.md` |
+| Crash recovery | COMPLETE | Real Controller process kills/restarts verified against unchanged public_02 simulator and PostgreSQL state; see `reports/crash_recovery.md` |
 
 Chunk 2 verification used `CONTROLLER_TEST_DATABASE_URL` for an isolated PostgreSQL 18 test database outside the repository. `python -m pytest -q tests/integration/storage/test_store.py` â€” **11 passed**. `python -m pytest -q` â€” **63 passed** with PostgreSQL integration tests enabled. `ruff check controller tests/integration tests/unit migrations`, `ruff format --check controller tests/integration tests/unit migrations`, `python -m compileall -q controller tests migrations`, `alembic check`, and `git diff --check` passed. No assessment scenario was run.
 
@@ -228,7 +228,7 @@ Do not rewrite prior history.
 
 ## Next action
 
-Chunks 1-8 are complete. Next: Chunk 9 - Load and observability. Chunks 9 and 10 remain NOT STARTED.
+Chunks 1-9 are complete. Chunk 10 - Submission and final grading remains NOT STARTED.
 
 ### Chunk 3 measured evidence (synthetic HTTP stream, PostgreSQL 18)
 
@@ -240,7 +240,7 @@ Chunks 1-8 are complete. Next: Chunk 9 - Load and observability. Chunks 9 and 10
 - Final checks: `.venv/Scripts/python.exe -m pytest -q tests/unit/ingestion/` â€” **19 passed**; `.venv/Scripts/python.exe -m pytest -q tests/integration/ingestion/` â€” **11 passed**; `.venv/Scripts/python.exe -m pytest -q` â€” **93 passed**; `ruff check .` passed; `ruff format --check .` reported 47 files already formatted; `.venv/Scripts/python.exe -m compileall -q controller tests` passed; Alembic `upgrade head` repeated and `check` reported no new operations; `git diff --check` passed. Ruff excludes only assignment-provided `sim/` and deliberately naive `examples/naive_controller.py`; neither was modified.
 - Chunk 6 required no schema migration. Chunk 7 public_02 ran in a fresh simulator and PostgreSQL database; see `reports/public_02.md`. No scenario YAML or run-directory data was used to make controller decisions.
 
-Known limits: these are synthetic development-host measurements, not `public_03_load` or grading-host results. The 1 MiB memory spool spills larger chunks to temporary disk without a hard total-byte cap, so deployments need sufficient temp capacity. Event IDs and the checkpoint are scoped to one simulator world per database; use a fresh database for independent simulator worlds until multi-run namespacing is designed.
+Known limits: the synthetic 30,000-event development-host measurement is not a grading-host result. The public_03 run and its platform-specific measurement limitations are documented in `reports/public_03_load.md` and `reports/public_03_load_review.md`. The 1 MiB memory spool spills larger chunks to temporary disk without a hard total-byte cap, so deployments need sufficient temp capacity. Event IDs and the checkpoint are scoped to one simulator world per database; use a fresh database for independent simulator worlds until multi-run namespacing is designed.
 
 ## Chunk 7 subtask progress
 
@@ -313,7 +313,7 @@ Known limits: these are synthetic development-host measurements, not `public_03_
 - Both actual `run.sh` public_02 Controller processes were hard-terminated at controlled database transaction windows and restarted against their unchanged simulator and PostgreSQL state. Both simulator runs finished at simulated minute 14,400 with 324,308 unique event IDs and chunk checkpoint 490.
 - Partial-ingestion recovery rolled back the in-flight chunk to zero local rows/no checkpoint, then restarted and committed the complete chunk once. Pending approval recovery matched the already-created remote approval by proposal ID; approval submission/apply outboxes each ended `succeeded` with exactly one attempt; only one controller-approved config version 3 and one apply-prepared audit record exist.
 - Full isolated PostgreSQL suite: 260 passed. Ruff check/format, compileall, Alembic check and diff check passed. See `reports/crash_recovery.md` for commands, kill PIDs, remote approval observation, before/after counts and limitations.
-- Chunk 9 remains NOT STARTED; nothing was pushed.
+- At the time of Chunk 8 acceptance, Chunk 9 had not started; nothing was pushed.
 
 ## Chunk 9 subtask progress
 
@@ -322,8 +322,8 @@ Known limits: these are synthetic development-host measurements, not `public_03_
 | 1. Telemetry primitives | COMPLETE | 10 unit tests passed; Ruff check/format, compileall, and diff check passed | `a1dab4d` |
 | 2. Runtime, HTTP, and storage instrumentation | COMPLETE | 66 focused unit/PostgreSQL tests passed; Ruff check/format, compileall, Alembic check, and diff check passed | `fa5845a` |
 | 3. Reproducible load runner and operations guidance | COMPLETE | 66 focused unit/PostgreSQL tests passed; fresh-DB guard, bounded sampler, actual-process launch and report formulas covered; quality checks passed | `41e52a0` |
-| 4. Load measurement and public_03 run | COMPLETE | Public `public_03_load` reached 7,200/7,200 simulated minutes, 9,737,439 events and facts; 480 advances succeeded; SRE speed target failed. Windows launcher-only CPU/RSS metrics were found invalid and are disclosed in `reports/public_03_load_review.md` | pending |
-| 5. Final acceptance and documentation | COMPLETE | Full isolated PostgreSQL suite: 281 passed; Ruff check/format, compileall, Alembic upgrade/check, and diff check passed | pending |
+| 4. Load measurement and public_03 run | COMPLETE | Public `public_03_load` reached 7,200/7,200 simulated minutes, 9,737,439 events and facts; 480 advances succeeded; SRE speed target failed. Windows launcher-only CPU/RSS metrics were found invalid and are disclosed in `reports/public_03_load_review.md` | `74b43eb` (measurement fix); final evidence commit below |
+| 5. Final acceptance and documentation | COMPLETE | Full isolated PostgreSQL suite: 281 passed; Ruff check/format, compileall, Alembic upgrade/check, and diff check passed | final evidence commit below |
 
 ## Chunk 9 acceptance results
 
