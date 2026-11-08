@@ -259,3 +259,10 @@ Known limits: these are synthetic development-host measurements, not `public_03_
 - Incident evidence at cutoff 234187 compared 37 baseline people with 39 changed-config people after excluding cross-version people. Hallucination proxy rates were 0.0% and 7.69%; the configured engineering one-sided screen p <= 0.10 passed at p=0.0695.
 - Candidate P1 passed simulator validation at 0.98 against the workflow floor 0.97 (n=100), was approved as `apr_00001`, and applied as config version 3. Final monitor cutoff 324308 was persisted as insufficient: QA and engagement had 11 paired people, below the 30-person gate; no corrective proposal was sent.
 - Final full suite: 258 passed on isolated PostgreSQL 18. `ruff check .`, `ruff format --check .`, `compileall`, Alembic check and `git diff --check` passed. Chunk 8 remains NOT STARTED.
+
+
+## Chunk 8 recovery audit
+
+- Inspected chunk stream ingestion and PostgreSQL transaction/checkpoint code, advance outbox reconciliation, approval submission and apply reconciliation, incident phase persistence, and their integration tests.
+- `docs/CRASH_RECOVERY.md` records code-verified crash windows, invariants, and the planned hard-kill procedure. Chunk stream rows plus checkpoint commit atomically; stable event IDs make committed replay idempotent. Advance, approval, and apply remote effects use persisted intent and documented read-side reconciliation; unresolved ambiguity halts for manual review because remote exactly-once semantics are not documented.
+- No implementation changes or real process kill have been made yet.
