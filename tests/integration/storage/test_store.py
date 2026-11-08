@@ -1,7 +1,8 @@
 import os
 
 import pytest
-from sqlalchemy import event as sqlalchemy_event, text
+from sqlalchemy import event as sqlalchemy_event
+from sqlalchemy import text
 
 from controller.storage.audit import AuditEntry, AuditLog
 from controller.storage.store import (
