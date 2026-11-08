@@ -18,7 +18,7 @@
 | 6 | Statistical comparison | COMPLETE | `7a3d228`, `eef6137`, `ecb6d92`, `dba33bf`, `faca570` |
 | 7 | Public incident workflow | COMPLETE | `3d28f68`, `7a4dadf`, `88f71bc`, `aa59820`, `ade9e79`, `4a0f257` |
 | 8 | Crash recovery demonstration | COMPLETE | `7222007`, `b2ef987`, `3b3a521`, `9f6f61b`, `82ed4c7`, `6e11334` |
-| 9 | Load and observability | COMPLETE | `a1dab4d`, `fa5845a`, `41e52a0`, `74b43eb`; final evidence commit below |
+| 9 | Load and observability | COMPLETE | `a1dab4d`, `fa5845a`, `41e52a0`, `74b43eb`, `6a18a96` |
 | 10 | Submission and final grading | NOT STARTED | planned |
 
 ## Chunk 6 subtask progress
@@ -322,8 +322,8 @@ Known limits: the synthetic 30,000-event development-host measurement is not a g
 | 1. Telemetry primitives | COMPLETE | 10 unit tests passed; Ruff check/format, compileall, and diff check passed | `a1dab4d` |
 | 2. Runtime, HTTP, and storage instrumentation | COMPLETE | 66 focused unit/PostgreSQL tests passed; Ruff check/format, compileall, Alembic check, and diff check passed | `fa5845a` |
 | 3. Reproducible load runner and operations guidance | COMPLETE | 66 focused unit/PostgreSQL tests passed; fresh-DB guard, bounded sampler, actual-process launch and report formulas covered; quality checks passed | `41e52a0` |
-| 4. Load measurement and public_03 run | COMPLETE | Public `public_03_load` reached 7,200/7,200 simulated minutes, 9,737,439 events and facts; 480 advances succeeded; SRE speed target failed. Windows launcher-only CPU/RSS metrics were found invalid and are disclosed in `reports/public_03_load_review.md` | `74b43eb` (measurement fix); final evidence commit below |
-| 5. Final acceptance and documentation | COMPLETE | Full isolated PostgreSQL suite: 281 passed; Ruff check/format, compileall, Alembic upgrade/check, and diff check passed | final evidence commit below |
+| 4. Load measurement and public_03 run | COMPLETE | Public `public_03_load` reached 7,200/7,200 simulated minutes, 9,737,439 events and facts; 480 advances succeeded; SRE speed target failed. Windows launcher-only CPU/RSS metrics were found invalid and are disclosed in `reports/public_03_load_review.md` | `74b43eb` (measurement fix), `6a18a96` (run evidence) |
+| 5. Final acceptance and documentation | COMPLETE | Full isolated PostgreSQL suite: 281 passed; Ruff check/format, compileall, Alembic upgrade/check, and diff check passed | `6a18a96` |
 
 ## Chunk 9 acceptance results
 
