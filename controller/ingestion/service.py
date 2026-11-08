@@ -82,6 +82,7 @@ class EventIngestionService:
                 for event in records():
                     yield event
 
+            persistence_started = time.perf_counter()
             inserted = await store.commit_chunk_stream(
                 checkpoint_key,
                 descriptor.chunk,
@@ -89,6 +90,10 @@ class EventIngestionService:
                 batch_size=batch_size,
             )
             if self._telemetry is not None:
+                self._telemetry.observe(
+                    "chunk_persistence_seconds",
+                    time.perf_counter() - persistence_started,
+                )
                 self._telemetry.record_ingestion(
                     chunk=descriptor.chunk,
                     observed_events=descriptor.events,

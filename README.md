@@ -115,7 +115,23 @@ The runtime is a CLI process and does not expose a metrics or health server. It 
 unbounded request labels. There are no universal alert thresholds; operators should alert on failed/ambiguous
 operations, stale ingestion, nonterminal outbox/proposal state, and resource limits using deployment budgets.
 Use `python scripts/measure_load.py <SIM_URL> --output reports/public_03_load.md` for the reproducible public
-load run; it samples controller RSS and PostgreSQL database size while retaining the controller JSON log.
+load run; it samples controller RSS and PostgreSQL database size while retaining the controller JSON log. Start
+the permitted public load simulator separately and point the measurement at a fresh, dedicated controller
+database (the runner rejects databases containing prior simulator events):
+
+```powershell
+py -3.12 -m sim serve --scenario scenarios/public_03_load.yaml `
+  --run-dir runs/public_03_measurement --host 127.0.0.1 --port 8700
+# In another shell, set CONTROLLER_DATABASE_URL to a disposable PostgreSQL database.
+py -3.12 scripts/measure_load.py http://127.0.0.1:8700 `
+  --output reports/public_03_load.md --log reports/public_03_load.jsonl `
+  --samples reports/public_03_load_samples.jsonl
+```
+
+The measurement tool starts the real `python -m controller` process, samples documented read-only simulator
+state and PostgreSQL size, and records the Controller's JSON log. It does not use the simulator run directory
+as an input. A timed-out/nonzero Controller is reported as incomplete, and a missing simulated-time interval
+is never counted as an SRE pass.
 
 ### Durable storage (Chunk 2)
 

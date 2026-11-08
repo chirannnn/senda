@@ -349,6 +349,7 @@ class SimulatorClient:
         client = self._require_client()
         path = f"/events/chunks/{chunk_number}"
         attempts = self._settings.get_retries + 1
+        download_started = time.perf_counter()
         with tempfile.SpooledTemporaryFile(max_size=1024 * 1024, mode="w+b") as body:
             for attempt in range(attempts):
                 body.seek(0)
@@ -378,6 +379,10 @@ class SimulatorClient:
                 raise SimulatorError(f"GET {path} exhausted its bounded retry policy")
 
             body.seek(0)
+            if self._telemetry is not None:
+                self._telemetry.observe(
+                    "chunk_download_seconds", time.perf_counter() - download_started
+                )
             with TextIOWrapper(body, encoding="utf-8", newline="") as text_body:
                 yield _iter_lines(text_body)
 
