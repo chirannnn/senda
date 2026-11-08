@@ -89,3 +89,11 @@ database growth, and whether the SRE threshold improves.
   `python -B -m compileall -q controller tests scripts`, Alembic `upgrade head`,
   Alembic `check`, and `git diff --check` all passed.
 - These checks validate behavior and schema consistency, not a throughput gain.
+
+## Follow-up implementation decision
+
+Stage timers have now been added for a future measured run, but no representative
+run has exercised them. The previous public_03 report aggregates the entire
+fact-processing loop and cannot establish that `derive_fact()` is a material
+CPU hot spot. Python projection changes are therefore deferred. The current
+validation and mapping logic remains untouched pending profile evidence.
