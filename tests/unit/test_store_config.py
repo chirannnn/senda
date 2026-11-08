@@ -1,7 +1,14 @@
+from unittest.mock import Mock
+
 import pytest
 
 from controller.errors import ConfigurationError
-from controller.storage.store import MAX_EVENT_INSERT_BATCH_ROWS, DatabaseStore
+from controller.storage import store as store_module
+from controller.storage.store import (
+    MAX_EVENT_INSERT_BATCH_ROWS,
+    DatabaseStore,
+    EventRecord,
+)
 
 
 @pytest.mark.anyio
@@ -55,5 +62,22 @@ async def test_stream_batch_rejects_parameter_limit_before_database_access():
             await store.commit_chunk_stream(
                 "unit", 1, no_events(), batch_size=MAX_EVENT_INSERT_BATCH_ROWS + 1
             )
+    finally:
+        await store.close()
+
+
+@pytest.mark.anyio
+async def test_direct_event_writes_enforce_limit_with_tiny_fixture(monkeypatch):
+    monkeypatch.setattr(store_module, "MAX_EVENT_INSERT_BATCH_ROWS", 2)
+    store = DatabaseStore("postgresql+asyncpg://user:unit-only-placeholder@db.test/app")
+    events = [
+        EventRecord(index, 1, "events", {"event_id": index}) for index in (1, 2, 3)
+    ]
+    try:
+        with pytest.raises(ValueError, match="row limit"):
+            await store.commit_chunk("tiny", 1, events)
+
+        with pytest.raises(ValueError, match="row limit"):
+            await store.insert_events(Mock(in_transaction=lambda: True), events)
     finally:
         await store.close()

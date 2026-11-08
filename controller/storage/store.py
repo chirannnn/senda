@@ -218,10 +218,15 @@ class DatabaseStore:
         raises so a corrupt replay cannot be mistaken for an idempotent retry.
         """
         self._ensure_open()
-        if not session.in_transaction():
-            raise RuntimeError("insert_events requires an active store transaction")
         if not events:
             return ()
+        if len(events) > MAX_EVENT_INSERT_BATCH_ROWS:
+            raise ValueError(
+                "event batch exceeds PostgreSQL's "
+                f"{MAX_EVENT_INSERT_BATCH_ROWS}-row limit"
+            )
+        if not session.in_transaction():
+            raise RuntimeError("insert_events requires an active store transaction")
 
         event_by_id: dict[int, EventRecord] = {}
         for event in events:
@@ -1259,6 +1264,11 @@ class DatabaseStore:
         This is a storage primitive only: it does not fetch, parse, or dispatch
         simulator events. Any failed insert or checkpoint update rolls back both.
         """
+        if len(events) > MAX_EVENT_INSERT_BATCH_ROWS:
+            raise ValueError(
+                "event batch exceeds PostgreSQL's "
+                f"{MAX_EVENT_INSERT_BATCH_ROWS}-row limit"
+            )
         if any(event.chunk_number != chunk_number for event in events):
             raise ValueError("every event must match the checkpoint chunk number")
         async with self.transaction(

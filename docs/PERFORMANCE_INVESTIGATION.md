@@ -120,3 +120,8 @@ upgrade/check, and `git diff --check` passed; Alembic reported no new operations
 No public load, stress, throughput, or large synthetic-data test was run. The
 added stage timers have not yet produced full-run measurements, so no runtime
 improvement is claimed.
+
+Storage also rejects oversized direct event batches before issuing SQL, in
+addition to limiting streamed batch sizes. A tiny test lowers the module limit
+to three rows solely to exercise both direct guards without allocating a
+large fixture.
