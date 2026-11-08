@@ -68,10 +68,7 @@ class SimulatorEvent(Base):
     """Raw event envelope; payload remains flexible until ingestion validates it."""
 
     __tablename__ = "simulator_events"
-    __table_args__ = (
-        Index("ix_simulator_events_chunk", "chunk_number"),
-        Index("ix_simulator_events_kind_chunk", "kind", "chunk_number"),
-    )
+    __table_args__ = (Index("ix_simulator_events_chunk", "chunk_number"),)
 
     event_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
     chunk_number: Mapped[int] = mapped_column(BigInteger, nullable=False)

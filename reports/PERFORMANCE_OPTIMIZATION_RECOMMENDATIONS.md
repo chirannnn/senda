@@ -346,3 +346,41 @@ No further SQL, batch-size, projection, index, or concurrency change is
 supported by the available evidence. The only additional implementation in
 this follow-up improves future measurement coverage; it is not a throughput
 optimization and makes no speedup claim.
+
+
+### Current optimization: remove unused event index maintenance
+
+Read-only inspection of `formi_public03_10pct_20261109` showed
+`ix_simulator_events_kind_chunk` had `idx_scan = 0` and occupied 39,370,752
+bytes. The database reported `stats_reset = NULL`; the counter is cumulative
+from the server statistics lifetime, so this is evidence of no recorded scan
+since tracking began, not proof that no external client will ever use this
+index. A source-wide query review found no Controller query filtering events
+by `(kind, chunk_number)`. The separate `ix_simulator_events_chunk` recorded
+7 scans and was retained. The simulator event primary key was retained.
+
+Removed the unused composite index from SQLAlchemy metadata and added Alembic
+revision `0009_drop_unused_event_idx`, using PostgreSQL `DROP INDEX
+CONCURRENTLY`; downgrade recreates it concurrently. Event rows, primary key,
+other indexes, conflict detection, ordering, and the chunk/checkpoint
+transaction are unchanged. The existing 10% benchmark database was not
+migrated or modified; the migration was applied to isolated test database
+`formi_perf_opt2_20261109`. A read-only catalog check confirmed the index is
+absent there and remains present in the preserved profile database.
+
+Focused storage/fact/schema suite: **28 passed**. Full isolated PostgreSQL
+suite: **304 passed**. Alembic upgrade and `alembic check` passed; Ruff,
+formatting, compileall, and `git diff --check` passed. This removes one
+39.4-MB B-tree and its per-event maintenance from new writes, but no throughput
+measurement was run and no elapsed-time improvement is claimed.
+
+No additional safe KPI index removal is justified: query code still uses
+workflow/time, workflow/version/time, and workflow/campaign access paths even
+though some were not exercised by this load profile. The KPI primary key and
+foreign keys support conflict detection and provenance integrity. Fact SQL
+rewrite/bulk loading remains deferred because the reported 2,094.7 seconds is
+client-side call elapsed time and the available tiny 10-row server probe does
+not establish a large-batch improvement. Keep batch defaults at 1,000 fact
+rows and 500 event rows; no bounded same-host batch comparison supports a new
+default. Keep serial cursor/checkpoint writes; there is no evidence that
+parallelism offsets its added recovery and contention risk.

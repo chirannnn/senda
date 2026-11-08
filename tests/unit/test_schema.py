@@ -37,6 +37,9 @@ def test_event_id_is_unique_and_raw_payload_has_no_simulator_schema_assumption()
     assert "payload" in event.columns
     assert isinstance(event.columns["payload"].type, JSON)
     assert any(index.name == "ix_simulator_events_chunk" for index in event.indexes)
+    assert all(
+        index.name != "ix_simulator_events_kind_chunk" for index in event.indexes
+    )
 
 
 def test_checkpoint_and_outbox_have_safety_constraints():

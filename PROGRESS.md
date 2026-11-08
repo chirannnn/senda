@@ -396,3 +396,11 @@ Known limits: the synthetic 30,000-event development-host measurement is not a g
 - Full isolated PostgreSQL suite: **303 passed**. `ruff check .`, `ruff format --check .` (106 files), compileall and `git diff --check` passed. No schema changes were made; Alembic was not needed.
 - Remaining candidates are deferred: projection is 47.694 seconds (about 1.3% of the 3,697.404-second 10% run); KPI insertion is expensive at the Controller call boundary but server execution is not separately measured; batch defaults have no comparable sweep; workflow/checkpoint stages are small in the saved profile; and prefetch/concurrency lacks worker/database wait evidence. Keep event/fact defaults at 500/1,000 and preserve serial cursor/checkpoint writes and all constraints.
 - No full load, stress test or large synthetic dataset was run. No previous benchmark evidence, simulator data, databases, or application behavior was changed. The 50-minute target remains unverified. Chunk 10 remains untouched.
+
+
+### Profile-backed index optimization
+
+- Read-only catalog inspection on the retained 10% profile DB found `ix_simulator_events_kind_chunk` at 0 scans and 39,370,752 bytes (`pg_stat_database.stats_reset` was NULL). No Controller SQL uses `(kind, chunk_number)`. The chunk-only index had 7 recorded scans and was retained; the event PK remains the conflict key.
+- Removed the unreferenced composite index from model metadata and added reversible Alembic revision `0009_drop_unused_event_idx` using concurrent index DDL. The retained profile database was not migrated; the migration was applied only to isolated test DB `formi_perf_opt2_20261109`, where catalog inspection confirmed the index absent.
+- Focused storage/fact/schema tests: **28 passed**; full isolated PostgreSQL suite: **304 passed**. Alembic upgrade/check, Ruff, formatting, compileall, and `git diff --check` passed.
+- This reduces new event index maintenance and index storage; no throughput improvement was measured. No other KPI index was removed because current query paths use those indexes. KPI insert rewrites, larger batches, and concurrency remain deferred for lack of comparable PostgreSQL execution evidence or because of transaction/recovery risk. No load or stress test was run; the 50-minute target is unverified.
