@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from datetime import datetime
 from typing import Any
 
@@ -73,6 +74,9 @@ def derive_fact(event: SimulatorEvent) -> KpiFactRecord:
     quality = "valid"
     detail: str | None = None
     dials = connected = concluded = uploaded = 0
+    qa_hallucination: bool | None = None
+    qa_flow_adherence: float | None = None
+    qa_quality = "not_applicable"
 
     if workflow_id is None:
         quality, detail = "invalid", "missing or invalid workflow_id"
@@ -107,6 +111,26 @@ def derive_fact(event: SimulatorEvent) -> KpiFactRecord:
             dials = 1
             connected = int(is_connected)
             concluded = int(disposition in _CONCLUDED_DISPOSITIONS)
+            qa = payload.get("qa")
+            if is_connected:
+                qa_quality = "incomplete"
+                if isinstance(qa, dict):
+                    hallucination = qa.get("hallucination_flag")
+                    adherence = qa.get("flow_adherence")
+                    if (
+                        isinstance(hallucination, bool)
+                        and isinstance(adherence, (int, float))
+                        and not isinstance(adherence, bool)
+                        and math.isfinite(adherence)
+                        and 0 <= adherence <= 1
+                    ):
+                        qa_hallucination = hallucination
+                        qa_flow_adherence = float(adherence)
+                        qa_quality = "valid"
+                    elif "hallucination_flag" in qa or "flow_adherence" in qa:
+                        qa_quality = "invalid"
+                elif qa is not None:
+                    qa_quality = "invalid"
             if lead_id is None:
                 quality, detail = "incomplete", "call event has no valid lead_id"
             elif config_version is None:
@@ -136,6 +160,9 @@ def derive_fact(event: SimulatorEvent) -> KpiFactRecord:
         connected=connected,
         concluded=concluded,
         uploaded=uploaded,
+        qa_hallucination=qa_hallucination,
+        qa_flow_adherence=qa_flow_adherence,
+        qa_quality=qa_quality,
     )
 
 

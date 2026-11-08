@@ -1,10 +1,10 @@
-﻿# Progress Tracking â€” Outcome-First Agent Loop
+# Progress Tracking â€” Outcome-First Agent Loop
 
 ## Overall status: COMPLETE â€” CHUNK 6
 
-**Current phase:** Chunk 6 statistical comparison complete
+**Current phase:** Chunk 7 population-level incident workflow
 **Current chunk:** 6 â€” Statistical comparison
-**Current next action:** Chunk 7 has not started.
+**Current next action:** Complete Chunk 7 subtasks sequentially; incident evidence is implemented.
 
 ## Implementation progress
 
@@ -241,3 +241,14 @@ Chunk 4 is complete. Next: Chunk 5 â€” Governance lifecycle. It has not sta
 - No schema migration was needed. Public scenarios remain NOT RUN; no scenario YAML or run-directory data was used by controller decisions.
 
 Known limits: these are synthetic development-host measurements, not `public_03_load` or grading-host results. The 1 MiB memory spool spills larger chunks to temporary disk without a hard total-byte cap, so deployments need sufficient temp capacity. Event IDs and the checkpoint are scoped to one simulator world per database; use a fresh database for independent simulator worlds until multi-run namespacing is designed.
+
+## Chunk 7 subtask progress
+
+| Subtask | Status | Validation | Commit |
+|---|---|---|---|
+| 1. Incident evidence | COMPLETE | 11 focused unit tests and 2 isolated PostgreSQL storage tests passed; migration 0008 applied; Ruff, format, compileall and diff check passed | this subtask commit |
+| 2. Credit-aware LLM suggestion | NOT STARTED | — | — |
+| 3. Candidate validation | NOT STARTED | — | — |
+| 4. Governed prompt proposal | NOT STARTED | — | — |
+| 5. Post-apply monitoring | NOT STARTED | — | — |
+| 6. Public scenario and acceptance | NOT STARTED | — | — |

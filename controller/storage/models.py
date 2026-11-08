@@ -152,7 +152,36 @@ class KpiFact(Base):
         nullable=False, default=0, server_default="0"
     )
     uploaded: Mapped[int] = mapped_column(nullable=False, default=0, server_default="0")
+    qa_hallucination: Mapped[bool | None] = mapped_column()
+    qa_flow_adherence: Mapped[float | None] = mapped_column()
+    qa_quality: Mapped[str] = mapped_column(
+        Text, nullable=False, default="not_applicable", server_default="not_applicable"
+    )
     derived_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class IncidentRecord(Base):
+    """Durable incident identity, current phase, evidence and append-only timeline."""
+
+    __tablename__ = "incident_records"
+    __table_args__ = (
+        UniqueConstraint(
+            "workflow_id", "trigger_config_version", name="uq_incident_workflow_config"
+        ),
+        Index("ix_incident_records_status", "status"),
+    )
+
+    incident_id: Mapped[str] = mapped_column(Text, primary_key=True)
+    workflow_id: Mapped[str] = mapped_column(
+        Text, ForeignKey("workflow_references.workflow_id"), nullable=False
+    )
+    trigger_config_version: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    status: Mapped[str] = mapped_column(Text, nullable=False)
+    evidence: Mapped[dict[str, object]] = mapped_column(JSON, nullable=False)
+    timeline: Mapped[list[dict[str, object]]] = mapped_column(JSON, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
 

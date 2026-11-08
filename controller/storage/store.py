@@ -32,6 +32,7 @@ from controller.storage.models import (
     ControllerRun,
     ExperimentDecision,
     GovernanceProposal,
+    IncidentRecord,
     KpiFact,
     OutboxOperation,
     ProcessingCheckpoint,
@@ -74,6 +75,9 @@ class KpiFactRecord:
     connected: int = 0
     concluded: int = 0
     uploaded: int = 0
+    qa_hallucination: bool | None = None
+    qa_flow_adherence: float | None = None
+    qa_quality: str = "not_applicable"
 
 
 class EventConflictError(RuntimeError):
@@ -316,6 +320,9 @@ class DatabaseStore:
                         "connected": fact.connected,
                         "concluded": fact.concluded,
                         "uploaded": fact.uploaded,
+                        "qa_hallucination": fact.qa_hallucination,
+                        "qa_flow_adherence": fact.qa_flow_adherence,
+                        "qa_quality": fact.qa_quality,
                     }
                     for fact in facts
                 ]
@@ -592,6 +599,114 @@ class DatabaseStore:
         self._ensure_open()
         async with self._sessions() as session:
             return list((await session.scalars(statement)).all())
+
+    async def list_incident_qa_facts(
+        self,
+        *,
+        workflow_id: str,
+        config_version: int,
+        cutoff_event_id: int,
+        after_event_id: int = 0,
+        limit: int = 1000,
+    ) -> list[KpiFact]:
+        """Return bounded persisted connected-call QA facts for one config version."""
+        if (
+            not workflow_id
+            or isinstance(config_version, bool)
+            or not isinstance(config_version, int)
+            or config_version < 0
+            or isinstance(cutoff_event_id, bool)
+            or not isinstance(cutoff_event_id, int)
+            or cutoff_event_id < 0
+            or isinstance(after_event_id, bool)
+            or not isinstance(after_event_id, int)
+            or after_event_id < 0
+            or isinstance(limit, bool)
+            or not isinstance(limit, int)
+            or limit < 1
+        ):
+            raise ValueError("incident query identity, cursor and limit are invalid")
+        statement = (
+            select(KpiFact)
+            .where(
+                KpiFact.workflow_id == workflow_id,
+                KpiFact.config_version == config_version,
+                KpiFact.event_type == "call",
+                KpiFact.quality == "valid",
+                KpiFact.connected == 1,
+                KpiFact.person_id.is_not(None),
+                KpiFact.source_event_id <= cutoff_event_id,
+                KpiFact.source_event_id > after_event_id,
+            )
+            .order_by(KpiFact.source_event_id)
+            .limit(limit)
+        )
+        self._ensure_open()
+        async with self._sessions() as session:
+            return list((await session.scalars(statement)).all())
+
+    async def get_incident(self, incident_id: str) -> IncidentRecord | None:
+        self._ensure_open()
+        async with self._sessions() as session:
+            return await session.get(IncidentRecord, incident_id)
+
+    async def save_incident(
+        self,
+        session: AsyncSession,
+        *,
+        incident_id: str,
+        workflow_id: str,
+        trigger_config_version: int,
+        status: str,
+        evidence: dict[str, object],
+        timeline: list[dict[str, object]],
+    ) -> tuple[IncidentRecord, bool]:
+        """Create incident state once or verify an idempotent identical retry."""
+        self.require_transaction(session)
+        existing = await session.get(IncidentRecord, incident_id)
+        if existing is not None:
+            if (
+                existing.workflow_id != workflow_id
+                or existing.trigger_config_version != trigger_config_version
+                or existing.evidence != evidence
+            ):
+                raise ValueError(
+                    "incident identity already belongs to different evidence"
+                )
+            return existing, False
+        record = IncidentRecord(
+            incident_id=incident_id,
+            workflow_id=workflow_id,
+            trigger_config_version=trigger_config_version,
+            status=status,
+            evidence=evidence,
+            timeline=timeline,
+        )
+        session.add(record)
+        await session.flush()
+        return record, True
+
+    async def update_incident(
+        self,
+        session: AsyncSession,
+        incident_id: str,
+        *,
+        status: str,
+        evidence: dict[str, object] | None = None,
+        timeline_entry: dict[str, object] | None = None,
+    ) -> IncidentRecord:
+        """Persist one state transition and append its actual timeline entry."""
+        self.require_transaction(session)
+        record = await session.get(IncidentRecord, incident_id)
+        if record is None:
+            raise ValueError(f"unknown incident {incident_id!r}")
+        record.status = status
+        if evidence is not None:
+            record.evidence = evidence
+        if timeline_entry is not None:
+            record.timeline = [*record.timeline, timeline_entry]
+        await session.flush()
+        return record
 
     async def save_experiment_decision(
         self,
