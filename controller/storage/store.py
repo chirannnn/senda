@@ -196,6 +196,15 @@ class DatabaseStore:
         if not events:
             return ()
 
+        event_by_id: dict[int, EventRecord] = {}
+        for event in events:
+            previous = event_by_id.get(event.event_id)
+            if previous is not None and previous != event:
+                raise EventConflictError(
+                    f"event ID {event.event_id} has conflicting content in one batch"
+                )
+            event_by_id[event.event_id] = event
+
         statement = (
             postgresql_insert(SimulatorEvent)
             .values(
@@ -213,15 +222,27 @@ class DatabaseStore:
             .returning(SimulatorEvent.event_id)
         )
         inserted_ids = tuple((await session.execute(statement)).scalars())
+        inserted_set = set(inserted_ids)
         event_ids = {event.event_id for event in events}
-        persisted = (
-            await session.execute(
-                select(SimulatorEvent).where(SimulatorEvent.event_id.in_(event_ids))
-            )
-        ).scalars()
-        persisted_by_id = {record.event_id: record for record in persisted}
+        conflicting_ids = event_ids - inserted_set
+        persisted_by_id = {}
+        if conflicting_ids:
+            persisted = (
+                await session.execute(
+                    select(SimulatorEvent).where(
+                        SimulatorEvent.event_id.in_(conflicting_ids)
+                    )
+                )
+            ).scalars()
+            persisted_by_id = {record.event_id: record for record in persisted}
         for event in events:
-            existing = persisted_by_id[event.event_id]
+            if event.event_id in inserted_set:
+                continue
+            existing = persisted_by_id.get(event.event_id)
+            if existing is None:
+                raise RuntimeError(
+                    f"event ID {event.event_id} disappeared during conflict validation"
+                )
             if (
                 existing.chunk_number != event.chunk_number
                 or existing.kind != event.kind

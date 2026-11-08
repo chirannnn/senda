@@ -1,7 +1,7 @@
 import os
 
 import pytest
-from sqlalchemy import text
+from sqlalchemy import event as sqlalchemy_event, text
 
 from controller.storage.audit import AuditEntry, AuditLog
 from controller.storage.store import (
@@ -38,6 +38,46 @@ async def test_insert_read_and_duplicate_event_is_idempotent(postgres_store):
     assert stored is not None
     assert stored.chunk_number == 81
     assert stored.payload == event.payload
+
+
+@pytest.mark.anyio
+async def test_new_event_batch_skips_conflict_readback_but_replay_checks_content(
+    postgres_store,
+):
+    store = postgres_store
+    statements: list[str] = []
+
+    def record_statement(connection, cursor, statement, parameters, context, many):
+        statements.append(statement.lower())
+
+    sqlalchemy_event.listen(
+        store.engine.sync_engine, "before_cursor_execute", record_statement
+    )
+    try:
+        batch = [_event(920101), _event(920102)]
+        async with store.transaction() as session:
+            assert await store.insert_events(session, batch) == (920101, 920102)
+        new_event_selects = [
+            sql
+            for sql in statements
+            if sql.lstrip().startswith("select") and "simulator_events" in sql
+        ]
+        assert new_event_selects == []
+
+        statements.clear()
+        async with store.transaction() as session:
+            assert await store.insert_events(session, batch) == ()
+        replay_selects = [
+            sql
+            for sql in statements
+            if sql.lstrip().startswith("select") and "simulator_events" in sql
+        ]
+        assert len(replay_selects) == 1
+        assert "event_id in" in replay_selects[0]
+    finally:
+        sqlalchemy_event.remove(
+            store.engine.sync_engine, "before_cursor_execute", record_statement
+        )
 
 
 @pytest.mark.anyio
