@@ -51,16 +51,26 @@ estimate from the code's batch size, not an elapsed-time measurement. Risks are
 limited to conflict classification; tests cover new inserts, idempotent replay,
 and conflicting replay.
 
-## Further optimization under evaluation
+## Applied fact-write optimization
 
-The KPI write path returns every newly inserted source ID only to count the
-rows, and issues one workflow-reference upsert per distinct workflow per page.
-The next targeted change will replace the returned ID payload with PostgreSQL's
-affected-row count and batch the reference upserts into one statement per page.
-It will preserve the existing page transaction and cursor atomicity. Page-size
-changes, dropping indexes, SQL-side fact derivation, or asynchronous write
-parallelism are not included because they need stronger measurements or carry
-greater correctness and operational risk.
+The KPI write path now uses PostgreSQL's affected-row count instead of returning
+and materializing each inserted source ID. Workflow reference refreshes for a
+page are issued as one multi-row upsert rather than one statement per workflow.
+The existing fact-page transaction and analytics-cursor atomicity are
+unchanged. A small PostgreSQL integration test verifies inserted and duplicate
+counts, one workflow upsert for multiple workflows, and the absence of a fact
+ID `RETURNING` clause.
+
+Expected benefit: avoid returning up to 1,000 source IDs per page and reduce
+workflow upsert statements to one per page. If all 12 configured workflows
+were represented on a page, that would be 11 fewer upsert statements. Actual
+distinct workflows per page were not recorded, so aggregate savings and elapsed
+time improvement are not claimed. This path requires PostgreSQL row-count
+semantics, consistent with the store's enforced PostgreSQL/asyncpg URL.
+
+Page-size changes, dropping indexes, SQL-side fact derivation, or asynchronous
+write parallelism are not included because they need stronger measurements or
+carry greater correctness and operational risk.
 
 ## Measurement limits
 

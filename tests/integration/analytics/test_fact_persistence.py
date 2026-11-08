@@ -3,14 +3,88 @@
 import os
 
 import pytest
+from sqlalchemy import event as sqlalchemy_event
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
 from controller.analytics.cohorts import definitions_from_config
-from controller.analytics.facts import PROCESSOR_NAME, KpiFactProcessor
+from controller.analytics.facts import PROCESSOR_NAME, KpiFactProcessor, derive_fact
 from controller.analytics.kpis import KpiCalculator
-from controller.storage.models import KpiFact
+from controller.storage.models import KpiFact, SimulatorEvent
 from controller.storage.store import DatabaseStore, EventRecord, KpiFactRecord
+
+
+@pytest.mark.anyio
+async def test_kpi_page_batches_workflow_upserts_and_counts_without_returning(
+    postgres_store,
+):
+    store: DatabaseStore = postgres_store
+    source_events = [
+        EventRecord(
+            940101,
+            101,
+            "events",
+            {
+                "event_id": 940101,
+                "type": "campaign_created",
+                "ts": "2027-01-04T01:00:00+05:30",
+                "workflow_id": "fact-batch-a",
+                "campaign_id": "campaign-a",
+                "leads": 10,
+            },
+        ),
+        EventRecord(
+            940102,
+            101,
+            "events",
+            {
+                "event_id": 940102,
+                "type": "campaign_created",
+                "ts": "2027-01-04T01:00:00+05:30",
+                "workflow_id": "fact-batch-b",
+                "campaign_id": "campaign-b",
+                "leads": 20,
+            },
+        ),
+    ]
+    async with store.transaction() as session:
+        await store.insert_events(session, source_events)
+    facts = [
+        derive_fact(
+            SimulatorEvent(
+                event_id=source.event_id,
+                chunk_number=source.chunk_number,
+                kind=source.kind,
+                payload=source.payload,
+            )
+        )
+        for source in source_events
+    ]
+
+    statements: list[str] = []
+
+    def record_statement(connection, cursor, statement, parameters, context, many):
+        statements.append(statement.lower())
+
+    sqlalchemy_event.listen(
+        store.engine.sync_engine, "before_cursor_execute", record_statement
+    )
+    try:
+        assert await store.commit_kpi_page("batch-test", facts, 940102) == 2
+        reference_inserts = [
+            sql for sql in statements if "insert into workflow_references" in sql
+        ]
+        fact_inserts = [sql for sql in statements if "insert into kpi_facts" in sql]
+        assert len(reference_inserts) == 1
+        assert len(fact_inserts) == 1
+        assert "returning" not in fact_inserts[0]
+
+        statements.clear()
+        assert await store.commit_kpi_page("batch-test", facts, 940102) == 0
+    finally:
+        sqlalchemy_event.remove(
+            store.engine.sync_engine, "before_cursor_execute", record_statement
+        )
 
 
 @pytest.mark.anyio

@@ -320,9 +320,20 @@ class DatabaseStore:
             raise ValueError("analytics cursor cannot precede a fact in its page")
         inserted_count = 0
         async with self.transaction() as session:
-            workflow_ids = {fact.workflow_id for fact in facts if fact.workflow_id}
-            for workflow_id in workflow_ids:
-                await self.ensure_workflow(session, workflow_id)
+            workflow_ids = sorted(
+                {fact.workflow_id for fact in facts if fact.workflow_id}
+            )
+            if workflow_ids:
+                await session.execute(
+                    postgresql_insert(WorkflowReference)
+                    .values(
+                        [{"workflow_id": workflow_id} for workflow_id in workflow_ids]
+                    )
+                    .on_conflict_do_update(
+                        index_elements=[WorkflowReference.workflow_id],
+                        set_={"updated_at": func.now()},
+                    )
+                )
             if facts:
                 rows = [
                     {
@@ -355,9 +366,13 @@ class DatabaseStore:
                     postgresql_insert(KpiFact)
                     .values(rows)
                     .on_conflict_do_nothing(index_elements=[KpiFact.source_event_id])
-                    .returning(KpiFact.source_event_id)
                 )
-                inserted_count = len((await session.execute(statement)).scalars().all())
+                result = await session.execute(statement)
+                if result.rowcount is None or result.rowcount < 0:
+                    raise RuntimeError(
+                        "database did not report the number of inserted KPI facts"
+                    )
+                inserted_count = result.rowcount
 
             table = AnalyticsCheckpoint
             cursor_statement = (
