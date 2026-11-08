@@ -177,6 +177,7 @@ async def run_measurement(args: argparse.Namespace) -> int:
                 "the load run requires a fresh controller database with no stored simulator events"
             )
         initial_db = await _database_size(store)
+        initial_pg_counters = await _postgres_counter_snapshot(store)
         started_wall = time.monotonic()
         command = [sys.executable, "-m", "controller", args.simulator_url]
         process = await asyncio.create_subprocess_exec(
@@ -235,6 +236,7 @@ async def run_measurement(args: argparse.Namespace) -> int:
             samples.sample_errors.append(
                 f"final_database_snapshot:{type(exc).__name__}"
             )
+        final_pg_counters = await _postgres_counter_snapshot(store)
         result = process.returncode
         status = "completed" if result == 0 and not timed_out else "incomplete"
         report = build_report(
@@ -254,6 +256,8 @@ async def run_measurement(args: argparse.Namespace) -> int:
             log_path=args.log,
             measurement_id=measurement_id,
             samples_path=args.samples,
+            initial_pg_counters=initial_pg_counters,
+            final_pg_counters=final_pg_counters,
         )
         args.output.write_text(report, encoding="utf-8")
         return 0 if status == "completed" else 1
@@ -274,6 +278,34 @@ async def _database_size(store: DatabaseStore) -> int:
             text("SELECT pg_database_size(current_database())")
         )
     return int(value or 0)
+
+
+async def _postgres_counter_snapshot(store: DatabaseStore) -> dict[str, Any]:
+    """Collect best-effort database-local and cluster WAL counters.
+
+    These snapshots are deliberately outside the Controller's hot path. A
+    missing view or restricted role is reported as unavailable and cannot
+    fail the measured Controller run.
+    """
+    snapshot: dict[str, Any] = {"database": None, "wal": None, "unavailable": {}}
+    queries = {
+        "database": text(
+            "SELECT to_jsonb(s) FROM pg_stat_database AS s "
+            "WHERE datname = current_database()"
+        ),
+        "wal": text("SELECT to_jsonb(s) FROM pg_stat_wal AS s"),
+    }
+    for scope, statement in queries.items():
+        try:
+            async with store.engine.connect() as connection:
+                value = await connection.scalar(statement)
+            if isinstance(value, dict):
+                snapshot[scope] = value
+            else:
+                snapshot["unavailable"][scope] = "no row or unsupported result"
+        except (SQLAlchemyError, OSError, TimeoutError) as exc:
+            snapshot["unavailable"][scope] = type(exc).__name__
+    return snapshot
 
 
 async def _existing_event_count(store: DatabaseStore) -> int:
@@ -303,6 +335,8 @@ def build_report(
     log_path: Path,
     measurement_id: str,
     samples_path: Path,
+    initial_pg_counters: dict[str, Any] | None = None,
+    final_pg_counters: dict[str, Any] | None = None,
 ) -> str:
     elapsed = max(elapsed_seconds, 0.0)
     simulated_delta = None
@@ -344,6 +378,9 @@ def build_report(
     )
     memory_total, memory_available = host_memory_snapshot()
     cpus = cpu_capacity()
+    pg_counter_delta = _postgres_counter_delta(
+        initial_pg_counters or {}, final_pg_counters or {}
+    )
     p95_text = _fmt(p95) if isinstance(p95, (float, int)) else (p95 or "unknown")
     lines = [
         "# Public 03 load and observability report",
@@ -406,6 +443,17 @@ def build_report(
         f"- Controller JSON log: `{log_path}`",
         f"- Sampling errors: `{json.dumps(samples.sample_errors)}`",
         "",
+        "## PostgreSQL counter snapshots",
+        "",
+        (
+            "Read-only `pg_stat_database` counters are scoped to the measured database; "
+            "`pg_stat_wal` counters are cluster-wide. The snapshots are best effort, "
+            "are not query timings, and statistics were not reset."
+        ),
+        f"- Start: `{json.dumps(initial_pg_counters or {}, sort_keys=True)}`",
+        f"- End: `{json.dumps(final_pg_counters or {}, sort_keys=True)}`",
+        f"- Numeric counter deltas: `{json.dumps(pg_counter_delta, sort_keys=True)}`",
+        "",
         "## Measurement notes",
         "",
         (
@@ -427,6 +475,31 @@ def build_report(
         "",
     ]
     return "\n".join(lines)
+
+
+def _postgres_counter_delta(
+    initial: dict[str, Any], final: dict[str, Any]
+) -> dict[str, dict[str, int | float]]:
+    """Return numeric per-scope deltas only where both snapshots have values."""
+    deltas: dict[str, dict[str, int | float]] = {}
+    for scope in ("database", "wal"):
+        before = initial.get(scope)
+        after = final.get(scope)
+        if not isinstance(before, dict) or not isinstance(after, dict):
+            continue
+        scope_delta: dict[str, int | float] = {}
+        for key, end_value in after.items():
+            start_value = before.get(key)
+            if (
+                isinstance(start_value, (int, float))
+                and not isinstance(start_value, bool)
+                and isinstance(end_value, (int, float))
+                and not isinstance(end_value, bool)
+            ):
+                scope_delta[key] = end_value - start_value
+        if scope_delta:
+            deltas[scope] = scope_delta
+    return deltas
 
 
 def _stage_totals(metrics: dict[str, Any]) -> dict[str, float]:

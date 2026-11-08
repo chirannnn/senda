@@ -301,3 +301,48 @@ remains the primary unresolved performance cost. The event result optimization
 does not reduce fact insertion, row-level foreign-key checks, or index writes.
 Server-side query timing under a safe per-database statistics setup is the next
 evidence needed before choosing a fact SQL strategy.
+
+### Follow-up decision record
+
+The existing load measurement runner now captures best-effort PostgreSQL
+statistics snapshots immediately before and after the measured Controller
+process. It reports database-local `pg_stat_database` values and cluster-wide
+`pg_stat_wal` values, plus numeric deltas for fields available in both
+snapshots. Missing or inaccessible views are marked unavailable and do not
+fail a run. The sampler does not reset statistics, and it runs outside the
+Controller hot path. These counters are not statement timings; concurrent
+database activity can affect deltas, and WAL counters cannot be attributed to
+one database. No load was run to collect a new profile with this reporter.
+
+The snapshot query was smoke-tested read-only against the isolated PostgreSQL
+test database; both scopes were available. The test suite also covers delta
+calculation and unavailable/non-numeric data. These checks establish reporter
+behavior only, not a performance improvement.
+
+The remaining optimization candidates are deferred on the current evidence:
+
+- **Python projection:** the 10% profile measured 47.694 seconds of
+  `fact_projection_seconds` within 3,697.404 seconds of Controller runtime
+  (about 1.3%). The projection stage is not the dominant measured opportunity;
+  avoid changing validation or data construction without a concrete code
+  profile showing a worthwhile safe gain.
+- **KPI fact SQL, indexes, foreign keys, or staging/COPY:** fact insert elapsed
+  time was 2,094.723 seconds at the Controller database-call boundary, but
+  query-specific PostgreSQL timings are unavailable. The tiny rolled-back
+  probe and plans identify real indexes/FK work but cannot support a production
+  SQL rewrite. Preserve constraints until attributable server timings exist.
+- **Event batch size, fact page size, workflow upserts, and checkpoint/commit
+  changes:** current values are bounded and correctness-tested, while no
+  comparable measurements show a better setting or material cost to target.
+  Keep defaults (500 event rows, 1,000 fact rows) and transaction boundaries.
+- **Prefetch or parallelism:** the measured serial code path is confirmed, but
+  corrected worker/database wait evidence is not sufficient to justify added
+  concurrency. Keep ordered cursor/checkpoint ownership serial.
+- **50-minute acceptance:** no further load or stress run is permitted in this
+  work. The target remains unverified; a future permitted full public run with
+  preflight, isolated simulator/database, and preserved evidence is required.
+
+No further SQL, batch-size, projection, index, or concurrency change is
+supported by the available evidence. The only additional implementation in
+this follow-up improves future measurement coverage; it is not a throughput
+optimization and makes no speedup claim.

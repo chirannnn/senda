@@ -1,12 +1,15 @@
+import asyncio
 from pathlib import Path
 
 import pytest
+from sqlalchemy.exc import SQLAlchemyError
 
 from scripts import measure_load
 from scripts.measure_load import (
     LoadSamples,
     _cpu_seconds,
     _histogram_quantile,
+    _postgres_counter_delta,
     _public_state,
     build_report,
     cpu_capacity,
@@ -58,6 +61,59 @@ def test_load_report_does_not_claim_sre_result_without_simulated_progress():
     )
     assert "SRE target (<600 seconds per simulated day): NOT MEASURED" in report
     assert "Result: **INCOMPLETE**" in report
+
+
+def test_postgres_counter_delta_is_numeric_and_scoped():
+    assert _postgres_counter_delta(
+        {
+            "database": {"xact_commit": 10, "blks_read": 4, "flag": True},
+            "wal": {"wal_bytes": 100},
+        },
+        {
+            "database": {"xact_commit": 16, "blks_read": 9, "flag": False},
+            "wal": {"wal_bytes": 180},
+        },
+    ) == {
+        "database": {"xact_commit": 6, "blks_read": 5},
+        "wal": {"wal_bytes": 80},
+    }
+
+
+def test_postgres_counter_delta_omits_unavailable_or_non_numeric_values():
+    assert (
+        _postgres_counter_delta(
+            {"database": None, "wal": {"wal_bytes": 10}},
+            {"database": {"xact_commit": 4}, "wal": {"wal_bytes": None}},
+        )
+        == {}
+    )
+
+
+def test_postgres_counter_snapshot_marks_failed_scope_unavailable():
+    class Connection:
+        async def scalar(self, statement):
+            if "pg_stat_wal" in str(statement):
+                raise SQLAlchemyError("permission denied")
+            return {"xact_commit": 12}
+
+    class ConnectionContext:
+        async def __aenter__(self):
+            return Connection()
+
+        async def __aexit__(self, *_args):
+            return None
+
+    class Engine:
+        def connect(self):
+            return ConnectionContext()
+
+    class Store:
+        engine = Engine()
+
+    snapshot = asyncio.run(measure_load._postgres_counter_snapshot(Store()))
+    assert snapshot["database"] == {"xact_commit": 12}
+    assert snapshot["wal"] is None
+    assert snapshot["unavailable"] == {"wal": "SQLAlchemyError"}
 
 
 def test_histogram_quantile_returns_upper_bucket_and_handles_bad_data():
