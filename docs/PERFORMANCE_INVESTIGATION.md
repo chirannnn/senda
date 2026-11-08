@@ -114,7 +114,7 @@ concurrency only if corrected end-to-end profiling demonstrates a critical-path
 wait or CPU bottleneck with enough expected benefit to justify its recovery and
 backpressure complexity.
 
-The implementation phase's final full suite passed with 298 tests on the
+The implementation phase's final full suite passed with 299 tests on the
 isolated PostgreSQL test database. Ruff check/format, compileall, Alembic
 upgrade/check, and `git diff --check` passed; Alembic reported no new operations.
 No public load, stress, throughput, or large synthetic-data test was run. The
