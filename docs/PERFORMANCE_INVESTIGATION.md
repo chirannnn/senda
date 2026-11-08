@@ -97,3 +97,10 @@ run has exercised them. The previous public_03 report aggregates the entire
 fact-processing loop and cannot establish that `derive_fact()` is a material
 CPU hot spot. Python projection changes are therefore deferred. The current
 validation and mapping logic remains untouched pending profile evidence.
+
+Additional PostgreSQL persistence changes are also deferred. Existing storage
+optimizations already remove a fresh-event readback and batch fact-page
+reference writes; no full-run measurement has quantified their benefit. The
+saved report provides no statement, commit, WAL, lock, query-plan or I/O profile
+to support a new persistence strategy. No index, constraint, transaction, or
+WAL setting has been changed.
