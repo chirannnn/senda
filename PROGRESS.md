@@ -266,3 +266,10 @@ Known limits: these are synthetic development-host measurements, not `public_03_
 - Inspected chunk stream ingestion and PostgreSQL transaction/checkpoint code, advance outbox reconciliation, approval submission and apply reconciliation, incident phase persistence, and their integration tests.
 - `docs/CRASH_RECOVERY.md` records code-verified crash windows, invariants, and the planned hard-kill procedure. Chunk stream rows plus checkpoint commit atomically; stable event IDs make committed replay idempotent. Advance, approval, and apply remote effects use persisted intent and documented read-side reconciliation; unresolved ambiguity halts for manual review because remote exactly-once semantics are not documented.
 - No implementation changes or real process kill have been made yet.
+
+
+### Chunk 8 subtask 2 ? partial chunk ingestion
+
+- Added `tests/integration/test_real_crash_recovery.py`: a separate Python process executes the real `EventIngestionService` against the isolated PostgreSQL database and pauses after the first batch insert while the encompassing chunk transaction is still open. The parent hard-kills that process.
+- Verified after termination: event IDs 990001 and 990003 were absent and `crash-demo` had no checkpoint. Restart replay inserted both events, advanced checkpoint to chunk 900, and a second replay inserted zero duplicates.
+- Validation: focused real-process/PostgreSQL test passed; Ruff, formatting, compileall and `git diff --check` passed. This focused test uses a fake chunk byte source; the end-to-end demonstration with a real simulator and the Controller CLI remains for subtask 5.
