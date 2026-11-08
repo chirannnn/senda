@@ -172,6 +172,12 @@ The 1-row measurement is not representative of batch cost. Larger defaults
 should be considered only after a bounded same-host batch sweep with actual
 batch-level timing, memory/WAL checks, and replay/rollback verification.
 
+The serial runtime remains serial. Existing API request and chunk-download
+measurements are only 93.003 and 38.184 seconds respectively; the saved worker
+CPU fields are invalid, so CPU saturation is unknown. Prefetching those reads
+cannot approach the roughly 2,878-second target gap. No concurrency is added:
+ordered checkpoint writes and a single analytics cursor owner remain required.
+
 No public load, stress test, or large dataset was used for this assessment.
 
 The implementation phase's final full suite passed with 299 tests on the
