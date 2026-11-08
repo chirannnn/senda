@@ -43,6 +43,14 @@ from controller.storage.models import (
 )
 from controller.telemetry import RuntimeTelemetry
 
+_POSTGRES_BIND_PARAMETER_LIMIT = 65_535
+_EVENT_INSERT_BIND_COLUMNS = 4
+_KPI_FACT_BIND_COLUMNS = 22
+MAX_EVENT_INSERT_BATCH_ROWS = (
+    _POSTGRES_BIND_PARAMETER_LIMIT // _EVENT_INSERT_BIND_COLUMNS
+)
+MAX_KPI_FACT_PAGE_ROWS = _POSTGRES_BIND_PARAMETER_LIMIT // _KPI_FACT_BIND_COLUMNS
+
 
 @dataclass(frozen=True, slots=True)
 class EventRecord:
@@ -343,6 +351,10 @@ class DatabaseStore:
         telemetry: RuntimeTelemetry | None = None,
     ) -> int:
         """Persist a fact page and its scan cursor atomically and idempotently."""
+        if len(facts) > MAX_KPI_FACT_PAGE_ROWS:
+            raise ValueError(
+                f"KPI fact page exceeds PostgreSQL's {MAX_KPI_FACT_PAGE_ROWS}-row limit"
+            )
         if scanned_through_event_id < 0 or any(
             fact.source_event_id > scanned_through_event_id for fact in facts
         ):
@@ -1275,8 +1287,15 @@ class DatabaseStore:
         written until the input is exhausted successfully and all batches have
         been flushed in the same transaction.
         """
-        if batch_size < 1:
-            raise ValueError("batch size must be positive")
+        if (
+            isinstance(batch_size, bool)
+            or not isinstance(batch_size, int)
+            or not 1 <= batch_size <= MAX_EVENT_INSERT_BATCH_ROWS
+        ):
+            raise ValueError(
+                "batch size must be between 1 and PostgreSQL's "
+                f"{MAX_EVENT_INSERT_BATCH_ROWS}-row limit"
+            )
         inserted_count = 0
         async with self.transaction(
             telemetry=telemetry, commit_metric="event_chunk_commit_seconds"

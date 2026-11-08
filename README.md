@@ -162,6 +162,13 @@ intent unresolved and stops further advances. Chunk reads may be replayed; uniqu
 transactions provide effectively-once local persistence, not end-to-end exactly-once delivery. Advance is
 bounded to the initial POST plus one reconciled retry; repeated ambiguity requires manual reconciliation.
 
+The event insert batch defaults to 500 rows and KPI fact projection defaults to 1,000 rows. Operators may
+set `CONTROLLER_EVENT_INSERT_BATCH_SIZE` (1–5,000) and `CONTROLLER_FACT_PAGE_SIZE` (1–2,000) for a
+controlled, measured run. These conservative bounds stay below PostgreSQL's 65,535 bind-parameter limit
+for the current event and fact row shapes. Changing them does not change per-chunk or per-fact-page
+transaction boundaries. The defaults remain unchanged because no representative throughput comparison
+has established a faster setting.
+
 ### Historical facts and audit queries (Chunk 4)
 
 After raw chunks are committed, a restartable analytics processor reads persisted events in bounded pages and

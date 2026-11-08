@@ -11,6 +11,8 @@ def test_settings_defaults_and_normalizes_base_url():
     assert settings.advance_minutes == 15
     assert settings.max_connections == 20
     assert settings.get_retries == 3
+    assert settings.fact_page_size == 1000
+    assert settings.event_insert_batch_size == 500
     assert settings.log_level == "INFO"
 
 
@@ -22,6 +24,8 @@ def test_settings_reads_environment_overrides():
             "CONTROLLER_CONNECT_TIMEOUT_SECONDS": "1.5",
             "CONTROLLER_MAX_CONNECTIONS": "8",
             "CONTROLLER_MAX_KEEPALIVE_CONNECTIONS": "4",
+            "CONTROLLER_FACT_PAGE_SIZE": "1500",
+            "CONTROLLER_EVENT_INSERT_BATCH_SIZE": "750",
             "CONTROLLER_LOG_LEVEL": "debug",
         },
     )
@@ -30,6 +34,8 @@ def test_settings_reads_environment_overrides():
     assert settings.connect_timeout_seconds == 1.5
     assert settings.max_connections == 8
     assert settings.max_keepalive_connections == 4
+    assert settings.fact_page_size == 1500
+    assert settings.event_insert_batch_size == 750
     assert settings.log_level == "DEBUG"
 
 
@@ -61,6 +67,12 @@ def test_invalid_simulator_urls_are_rejected_without_echoing_input(url):
         {"get_retries": 11},
         {"retry_backoff_seconds": 2, "retry_max_backoff_seconds": 1},
         {"log_level": "TRACE"},
+        {"fact_page_size": 0},
+        {"fact_page_size": 2001},
+        {"fact_page_size": True},
+        {"event_insert_batch_size": 0},
+        {"event_insert_batch_size": 5001},
+        {"event_insert_batch_size": 1.5},
     ],
 )
 def test_invalid_runtime_values_are_rejected(kwargs):
@@ -75,3 +87,15 @@ def test_malformed_environment_value_has_actionable_error_without_value_echo():
         Settings.from_environment(
             "http://127.0.0.1:8700", {"CONTROLLER_MAX_CONNECTIONS": "secret-value"}
         )
+
+
+@pytest.mark.parametrize(
+    ("name", "value"),
+    [
+        ("CONTROLLER_FACT_PAGE_SIZE", "not-an-int"),
+        ("CONTROLLER_EVENT_INSERT_BATCH_SIZE", "not-an-int"),
+    ],
+)
+def test_malformed_batch_setting_is_rejected(name, value):
+    with pytest.raises(ConfigurationError, match=f"{name} must be an integer"):
+        Settings.from_environment("http://127.0.0.1:8700", {name: value})

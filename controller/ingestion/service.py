@@ -12,7 +12,11 @@ from controller.ingestion.events import (
     IngestedEvent,
 )
 from controller.ingestion.parser import iter_ndjson, parse_descriptors
-from controller.storage.store import DatabaseStore, EventRecord
+from controller.storage.store import (
+    MAX_EVENT_INSERT_BATCH_ROWS,
+    DatabaseStore,
+    EventRecord,
+)
 from controller.telemetry import RuntimeTelemetry
 
 
@@ -23,9 +27,21 @@ class EventIngestionService:
         self,
         simulator: SimulatorClient,
         telemetry: RuntimeTelemetry | None = None,
+        *,
+        batch_size: int = 500,
     ) -> None:
+        if (
+            isinstance(batch_size, bool)
+            or not isinstance(batch_size, int)
+            or not 1 <= batch_size <= MAX_EVENT_INSERT_BATCH_ROWS
+        ):
+            raise ValueError(
+                "event insert batch size must be between 1 and "
+                f"{MAX_EVENT_INSERT_BATCH_ROWS} rows"
+            )
         self._simulator = simulator
         self._telemetry = telemetry
+        self._batch_size = batch_size
 
     async def list_history_chunks(self, *, after: int = -1) -> list[ChunkDescriptor]:
         """Return ordered history descriptors after the supplied global cursor."""
@@ -57,7 +73,7 @@ class EventIngestionService:
         descriptor: ChunkDescriptor,
         *,
         checkpoint_key: str = "simulator",
-        batch_size: int = 500,
+        batch_size: int | None = None,
     ) -> int:
         """Fetch and atomically persist one descriptor; safe to repeat its cursor."""
         checkpoint = await store.get_checkpoint(checkpoint_key)
@@ -65,6 +81,7 @@ class EventIngestionService:
             return 0
 
         started = time.perf_counter()
+        selected_batch_size = self._batch_size if batch_size is None else batch_size
         # stream_chunk_lines fully downloads to its 1 MiB memory / temp-file
         # spool before yielding, so the SQL transaction never spans HTTP I/O.
         async with self._simulator.stream_chunk_lines(descriptor.chunk) as lines:
@@ -87,7 +104,7 @@ class EventIngestionService:
                 checkpoint_key,
                 descriptor.chunk,
                 async_records(),
-                batch_size=batch_size,
+                batch_size=selected_batch_size,
                 telemetry=self._telemetry,
             )
             if self._telemetry is not None:
@@ -116,7 +133,7 @@ class EventIngestionService:
         descriptors: list[ChunkDescriptor],
         *,
         checkpoint_key: str = "simulator",
-        batch_size: int = 500,
+        batch_size: int | None = None,
     ) -> tuple[int, int]:
         """Commit the supplied complete ordered descriptor sequence in order."""
         checkpoint = await store.get_checkpoint(checkpoint_key)
@@ -154,7 +171,7 @@ class EventIngestionService:
         store: DatabaseStore,
         *,
         checkpoint_key: str = "simulator",
-        batch_size: int = 500,
+        batch_size: int | None = None,
     ) -> tuple[int, int]:
         """Replay every currently listed descriptor after the durable checkpoint."""
         checkpoint = await store.get_checkpoint(checkpoint_key)

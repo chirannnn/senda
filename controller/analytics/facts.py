@@ -8,7 +8,11 @@ from datetime import datetime
 from typing import Any
 
 from controller.storage.models import SimulatorEvent
-from controller.storage.store import DatabaseStore, KpiFactRecord
+from controller.storage.store import (
+    MAX_KPI_FACT_PAGE_ROWS,
+    DatabaseStore,
+    KpiFactRecord,
+)
 from controller.telemetry import RuntimeTelemetry
 
 PROCESSOR_NAME = "kpi-facts-v1"
@@ -32,8 +36,14 @@ class KpiFactProcessor:
         page_size: int = 1000,
         telemetry: RuntimeTelemetry | None = None,
     ) -> None:
-        if page_size < 1:
-            raise ValueError("page size must be positive")
+        if (
+            isinstance(page_size, bool)
+            or not isinstance(page_size, int)
+            or not 1 <= page_size <= MAX_KPI_FACT_PAGE_ROWS
+        ):
+            raise ValueError(
+                f"page size must be between 1 and {MAX_KPI_FACT_PAGE_ROWS} rows"
+            )
         self._store = store
         self._page_size = page_size
         self._telemetry = telemetry

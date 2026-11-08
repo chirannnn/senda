@@ -1,7 +1,7 @@
 import pytest
 
 from controller.errors import ConfigurationError
-from controller.storage.store import DatabaseStore
+from controller.storage.store import MAX_EVENT_INSERT_BATCH_ROWS, DatabaseStore
 
 
 @pytest.mark.anyio
@@ -40,3 +40,20 @@ async def test_store_close_is_idempotent_and_disallows_reuse():
     await store.close()
     with pytest.raises(RuntimeError, match="closed"):
         await store.initialize()
+
+
+@pytest.mark.anyio
+async def test_stream_batch_rejects_parameter_limit_before_database_access():
+    store = DatabaseStore("postgresql+asyncpg://user:unit-only-placeholder@db.test/app")
+
+    async def no_events():
+        if False:
+            yield None
+
+    try:
+        with pytest.raises(ValueError, match="row limit"):
+            await store.commit_chunk_stream(
+                "unit", 1, no_events(), batch_size=MAX_EVENT_INSERT_BATCH_ROWS + 1
+            )
+    finally:
+        await store.close()

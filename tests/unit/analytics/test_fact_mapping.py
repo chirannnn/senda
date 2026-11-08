@@ -98,3 +98,9 @@ def test_invalid_missing_or_unknown_data_is_explicit(payload, expected_quality):
 def test_processor_rejects_unbounded_or_empty_page_configuration():
     with pytest.raises(ValueError, match="page size"):
         KpiFactProcessor(None, page_size=0)  # type: ignore[arg-type]
+
+    with pytest.raises(ValueError, match="page size"):
+        KpiFactProcessor(None, page_size=3000)  # type: ignore[arg-type]
+
+    with pytest.raises(ValueError, match="page size"):
+        KpiFactProcessor(None, page_size=True)  # type: ignore[arg-type]

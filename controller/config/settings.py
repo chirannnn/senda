@@ -26,6 +26,8 @@ class Settings:
     get_retries: int = 3
     retry_backoff_seconds: float = 0.25
     retry_max_backoff_seconds: float = 2.0
+    fact_page_size: int = 1000
+    event_insert_batch_size: int = 500
     log_level: str = "INFO"
 
     def __post_init__(self) -> None:
@@ -49,6 +51,20 @@ class Settings:
                 )
         if self.max_connections < 1:
             raise ConfigurationError("max connections must be at least 1")
+        if (
+            isinstance(self.fact_page_size, bool)
+            or not isinstance(self.fact_page_size, int)
+            or not 1 <= self.fact_page_size <= 2000
+        ):
+            raise ConfigurationError("fact page size must be between 1 and 2000")
+        if (
+            isinstance(self.event_insert_batch_size, bool)
+            or not isinstance(self.event_insert_batch_size, int)
+            or not 1 <= self.event_insert_batch_size <= 5000
+        ):
+            raise ConfigurationError(
+                "event insert batch size must be between 1 and 5000"
+            )
         if not 0 <= self.max_keepalive_connections <= self.max_connections:
             raise ConfigurationError(
                 "max keepalive connections must be between 0 and max connections"
@@ -103,6 +119,10 @@ class Settings:
                 ),
                 retry_max_backoff_seconds=_float_value(
                     values, "CONTROLLER_RETRY_MAX_BACKOFF_SECONDS", 2.0
+                ),
+                fact_page_size=_int_value(values, "CONTROLLER_FACT_PAGE_SIZE", 1000),
+                event_insert_batch_size=_int_value(
+                    values, "CONTROLLER_EVENT_INSERT_BATCH_SIZE", 500
                 ),
                 log_level=values.get("CONTROLLER_LOG_LEVEL", "INFO"),
             )

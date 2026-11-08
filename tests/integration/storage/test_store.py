@@ -107,6 +107,32 @@ async def test_chunk_rows_and_ordered_descriptor_checkpoint_commit_together(
 
 
 @pytest.mark.anyio
+async def test_tiny_stream_batches_preserve_rows_and_checkpoint_semantics(
+    postgres_store,
+):
+    store = postgres_store
+    events = [_event(920111 + offset, chunk_number=111) for offset in range(4)]
+
+    async def stream():
+        for item in events:
+            yield item
+
+    results = []
+    for checkpoint_key, batch_size in (("tiny-batch-one", 1), ("tiny-batch-two", 2)):
+        inserted = await store.commit_chunk_stream(
+            checkpoint_key, 111, stream(), batch_size=batch_size
+        )
+        replayed = await store.commit_chunk_stream(
+            checkpoint_key, 111, stream(), batch_size=batch_size
+        )
+        results.append((inserted, replayed, await store.get_checkpoint(checkpoint_key)))
+
+    assert results == [(4, 0, 111), (0, 0, 111)]
+    stored = [await store.get_event(item.event_id) for item in events]
+    assert all(item is not None for item in stored)
+
+
+@pytest.mark.anyio
 async def test_chunk_commit_rejects_rows_for_a_different_descriptor(postgres_store):
     store = postgres_store
     with pytest.raises(ValueError, match="match the checkpoint chunk"):

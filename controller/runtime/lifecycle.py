@@ -64,12 +64,22 @@ async def run_controller(
     metrics.record_initial_credits(state)
     metrics.record_state(state)
     ingestion = (
-        EventIngestionService(simulator, telemetry=metrics)
+        EventIngestionService(
+            simulator,
+            telemetry=metrics,
+            batch_size=settings.event_insert_batch_size,
+        )
         if store is not None
         else None
     )
     fact_processor = (
-        KpiFactProcessor(store, telemetry=metrics) if store is not None else None
+        KpiFactProcessor(
+            store,
+            page_size=settings.fact_page_size,
+            telemetry=metrics,
+        )
+        if store is not None
+        else None
     )
     audit = AuditLog(store) if store is not None else None
     if store is not None and ingestion is not None:

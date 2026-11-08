@@ -8,7 +8,7 @@ from controller.errors import SimulatorError
 from controller.ingestion.events import EventValidationError
 from controller.ingestion.runner import advance_and_ingest
 from controller.ingestion.service import EventIngestionService
-from controller.storage.store import DatabaseStore
+from controller.storage.store import MAX_EVENT_INSERT_BATCH_ROWS, DatabaseStore
 
 
 def _descriptor(chunk, kind):
@@ -20,6 +20,12 @@ def _descriptor(chunk, kind):
         "last_event_id": 3,
         "until_minute": 0,
     }
+
+
+@pytest.mark.parametrize("batch_size", [0, -1, MAX_EVENT_INSERT_BATCH_ROWS + 1, True])
+def test_ingestion_service_rejects_unsafe_batch_size(batch_size):
+    with pytest.raises(ValueError, match="event insert batch size"):
+        EventIngestionService(None, batch_size=batch_size)  # type: ignore[arg-type]
 
 
 @pytest.mark.anyio
