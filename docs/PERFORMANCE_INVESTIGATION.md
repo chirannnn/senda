@@ -166,6 +166,12 @@ representative. No additional storage strategy, index/constraint change, WAL
 tuning, or concurrency is justified without operation-level timing and
 PostgreSQL resource evidence.
 
+Batch defaults remain **1,000 facts** and **500 events**. Existing 1/2-row
+fixtures establish equivalent persistence/checkpoint behavior, not efficiency.
+The 1-row measurement is not representative of batch cost. Larger defaults
+should be considered only after a bounded same-host batch sweep with actual
+batch-level timing, memory/WAL checks, and replay/rollback verification.
+
 No public load, stress test, or large dataset was used for this assessment.
 
 The implementation phase's final full suite passed with 299 tests on the
