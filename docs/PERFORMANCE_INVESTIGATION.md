@@ -114,6 +114,46 @@ concurrency only if corrected end-to-end profiling demonstrates a critical-path
 wait or CPU bottleneck with enough expected benefit to justify its recovery and
 backpressure complexity.
 
+## Performance optimization phase 2 assessment
+
+The current stage timers are implemented and exercised by focused tests, but
+the preserved public_03 raw log predates them. It contains only the former
+aggregate histograms; searches of the run log found no values for projection,
+source-page reads, fact insert, workflow upsert, cursor update, or transaction
+commit stages. The single-row insertion probe elsewhere in the task history is
+only a correctness-scale database measurement and cannot estimate batched
+throughput or full-run contribution.
+
+The best available workload indicator remains the 4,320.740-second aggregate
+`fact_processing_seconds` interval. The runtime awaits fact processing
+sequentially after chunk ingestion, so this interval is a likely critical-path
+area (about 73.5% of the reported 5,878.203-second wall runtime). It includes
+page reads, Python projection, page payload construction, SQL operations and
+commits, and does not isolate any of those components. Chunk persistence is
+contained within chunk ingestion timing; these aggregate durations must not be
+summed as independent wall time. API/request/download time is small compared
+with the target gap. No evidence demonstrates CPU saturation, database commit
+dominance, or available concurrency headroom.
+
+The current instrumented code already records fixed-name histograms for
+`fact_event_page_read_seconds`, `fact_projection_seconds`,
+`fact_page_payload_build_seconds`,
+`fact_workflow_reference_upsert_seconds`, `fact_insert_execute_seconds`,
+`fact_cursor_update_seconds`, `fact_page_commit_seconds`,
+`event_insert_execute_seconds`, `event_conflict_lookup_seconds`,
+`event_checkpoint_update_seconds`, and `event_chunk_commit_seconds`. Page and
+chunk transaction boundaries remain intact. A new run with this code is needed
+before any component-level optimization is justified.
+
+Phase 2 therefore makes no Python projection, PostgreSQL strategy, batch
+default, prefetch, or concurrency change. The existing 1,000-fact and 500-event
+defaults remain; the safe bounded runtime settings added previously remain
+available for a separately measured future run. Corrected stage-level evidence
+is still required to decide which internal fact stage causes the aggregate
+critical-path cost.
+
+No public load, stress test, or large dataset was used for this assessment.
+
 The implementation phase's final full suite passed with 299 tests on the
 isolated PostgreSQL test database. Ruff check/format, compileall, Alembic
 upgrade/check, and `git diff --check` passed; Alembic reported no new operations.
