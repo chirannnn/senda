@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import math
 import random
 from dataclasses import asdict, dataclass
+from datetime import datetime
 from typing import Any, Protocol
 
 from controller.errors import (
@@ -17,6 +19,7 @@ from controller.errors import (
 from controller.governance.proposals import ProposalPayload, submit_proposal
 from controller.governance.reconcile import apply_approved_proposal
 from controller.governance.state_machine import ProposalStatus, poll_approval
+from controller.statistics.estimation import holm_adjust
 from controller.storage.audit import AuditEntry, AuditLog
 from controller.storage.models import KpiFact
 from controller.storage.store import DatabaseStore, IncidentStateConflictError
@@ -82,6 +85,25 @@ class PopulationQAEvidence:
     upper: float | None
     sufficient: bool
     reason: str
+
+    def to_json(self) -> dict[str, object]:
+        return asdict(self)
+
+
+@dataclass(frozen=True, slots=True)
+class IncidentMetricComparison:
+    metric: str
+    baseline_rate: float
+    post_rate: float
+    difference: float
+    lower: float
+    upper: float
+    adjusted_p: float
+    paired_people: int
+    baseline_trials: int
+    post_trials: int
+    sufficient: bool
+    harmful: bool
 
     def to_json(self) -> dict[str, object]:
         return asdict(self)
@@ -462,6 +484,7 @@ async def request_candidate_suggestions(
         **request_evidence,
         "suggestion": {
             "candidates": candidates,
+            "current_prompt_version": current_config["prompt_version"],
             "available_before": float(remaining),
             "available_after": float(after),
             "credits_used_observed": used,
@@ -1098,6 +1121,636 @@ async def reconcile_incident_approval(
                 "reason": str(exc),
             },
         )
+
+
+async def monitor_applied_prompt(
+    simulator: IncidentSuggestionAPI,
+    store: DatabaseStore,
+    audit: AuditLog,
+    *,
+    incident_id: str,
+    monitor_end: datetime,
+    cutoff_event_id: int,
+    minimum_paired_people: int,
+    max_incomplete_fraction: float,
+    replicates: int = 10_000,
+    page_size: int = 1000,
+) -> dict[str, object]:
+    """Compare one fixed post-apply window with pre-change observations.
+
+    Person-level paired bootstrap intervals are adjusted with Holm across the
+    QA rate, declared primary KPI, and configured guardrail. A later cutoff for
+    the same applied version is rejected to prevent repeated peeking.
+    """
+    if monitor_end.tzinfo is None:
+        raise ValueError("monitor end must include a timezone")
+    if (
+        isinstance(minimum_paired_people, bool)
+        or not isinstance(minimum_paired_people, int)
+        or minimum_paired_people < 2
+    ):
+        raise ValueError("minimum paired people must be at least two")
+    if (
+        isinstance(max_incomplete_fraction, bool)
+        or not isinstance(max_incomplete_fraction, (int, float))
+        or not math.isfinite(max_incomplete_fraction)
+        or not 0 <= max_incomplete_fraction < 1
+    ):
+        raise ValueError("maximum incomplete fraction must be finite and in [0, 1)")
+    if replicates < 100 or page_size < 1:
+        raise ValueError("monitoring bootstrap settings are invalid")
+    incident = await store.get_incident(incident_id)
+    if incident is None:
+        raise ValueError(f"unknown incident {incident_id!r}")
+    if incident.status not in {"applied", "monitoring_complete"}:
+        return {
+            "status": incident.status,
+            "reason": "proposal has not completed governed apply",
+        }
+    proposal_data = incident.evidence.get("proposal")
+    proposal_id = (
+        proposal_data.get("proposal_id") if isinstance(proposal_data, dict) else None
+    )
+    approval_id = (
+        proposal_data.get("approval_id") if isinstance(proposal_data, dict) else None
+    )
+    base_version = (
+        proposal_data.get("base_version") if isinstance(proposal_data, dict) else None
+    )
+    if not isinstance(proposal_id, str) or not isinstance(approval_id, str):
+        raise TypeError("applied incident lacks proposal and approval identities")
+    if isinstance(base_version, bool) or not isinstance(base_version, int):
+        raise TypeError("applied incident lacks a valid base version")
+
+    current = await simulator.get_workflow_config(incident.workflow_id)
+    workflow = next(
+        (
+            item
+            for item in await simulator.list_workflows()
+            if item.get("workflow_id") == incident.workflow_id
+        ),
+        None,
+    )
+    history = await simulator.get_config_history(incident.workflow_id)
+    applied = next(
+        (
+            item
+            for item in history
+            if item.get("approval_id") == approval_id
+            and item.get("proposal_id") == proposal_id
+            and item.get("actor") == "controller_approved"
+            and isinstance(item.get("version"), int)
+            and not isinstance(item.get("version"), bool)
+            and item["version"] > base_version
+        ),
+        None,
+    )
+    prior = next(
+        (
+            item
+            for item in history
+            if item.get("version") == base_version
+            and isinstance(item.get("applied_at"), str)
+        ),
+        None,
+    )
+    if (
+        applied is None
+        or prior is None
+        or not isinstance(applied.get("applied_at"), str)
+        or current.get("version") != applied.get("version")
+    ):
+        return await _record_monitor_block(
+            store,
+            audit,
+            incident_id,
+            status="monitoring_stale",
+            reason="Config history does not match the applied approval",
+        )
+    baseline_start = _parse_timestamp(prior["applied_at"])
+    applied_at = _parse_timestamp(applied["applied_at"])
+    if baseline_start is None or applied_at is None or monitor_end <= applied_at:
+        return await _record_monitor_block(
+            store,
+            audit,
+            incident_id,
+            status="monitoring_insufficient",
+            reason="Config history or post-apply window is incomplete",
+        )
+    objective = workflow.get("objective") if isinstance(workflow, dict) else None
+    try:
+        primary_name, guardrail_name, margin = _incident_objective(objective)
+    except (TypeError, ValueError):
+        return await _record_monitor_block(
+            store,
+            audit,
+            incident_id,
+            status="monitoring_unconfigured",
+            reason="Workflow primary KPI or configured guardrail is missing or invalid",
+        )
+    config = current.get("config")
+    if not isinstance(config, dict) or not isinstance(
+        config.get("prompt_version"), str
+    ):
+        return await _record_monitor_block(
+            store,
+            audit,
+            incident_id,
+            status="monitoring_stale",
+            reason="Current prompt config is malformed",
+        )
+
+    baseline_facts = await _incident_monitor_facts(
+        store,
+        workflow_id=incident.workflow_id,
+        config_version=base_version,
+        start_at=baseline_start,
+        end_at=applied_at,
+        cutoff_event_id=cutoff_event_id,
+        page_size=page_size,
+    )
+    post_facts = await _incident_monitor_facts(
+        store,
+        workflow_id=incident.workflow_id,
+        config_version=applied["version"],
+        start_at=applied_at,
+        end_at=monitor_end,
+        cutoff_event_id=cutoff_event_id,
+        page_size=page_size,
+    )
+    names = ("hallucination_rate", primary_name, guardrail_name)
+    raw = {
+        name: _paired_metric_comparison(
+            name,
+            baseline_facts,
+            post_facts,
+            minimum_paired_people=minimum_paired_people,
+            max_incomplete_fraction=float(max_incomplete_fraction),
+            harm_threshold=(-margin if name == guardrail_name else 0.0),
+            seed=f"{incident_id}:{applied['version']}:{cutoff_event_id}:{name}",
+            replicates=replicates,
+        )
+        for name in names
+    }
+    adjusted = holm_adjust({name: item["p_value"] for name, item in raw.items()})
+    metrics: dict[str, dict[str, object]] = {}
+    for name, item in raw.items():
+        threshold = -margin if name == guardrail_name else 0.0
+        expected_direction = 1 if name == "hallucination_rate" else -1
+        directional = (
+            item["difference"] > threshold
+            if expected_direction == 1
+            else item["difference"] < threshold
+        )
+        metrics[name] = {
+            key: item[key]
+            for key in (
+                "baseline_rate",
+                "post_rate",
+                "difference",
+                "lower",
+                "upper",
+                "paired_people",
+                "baseline_trials",
+                "post_trials",
+                "sufficient",
+            )
+        } | {
+            "adjusted_p": adjusted[name],
+            "harmful": directional and adjusted[name] <= 0.05,
+        }
+    sufficient = all(bool(item["sufficient"]) for item in metrics.values())
+    harmful = sufficient and any(bool(item["harmful"]) for item in metrics.values())
+    input_material = {
+        "incident_id": incident_id,
+        "workflow_id": incident.workflow_id,
+        "base_version": base_version,
+        "applied_version": applied["version"],
+        "baseline_start": baseline_start.isoformat(),
+        "applied_at": applied_at.isoformat(),
+        "monitor_end": monitor_end.isoformat(),
+        "cutoff_event_id": cutoff_event_id,
+        "minimum_paired_people": minimum_paired_people,
+        "max_incomplete_fraction": float(max_incomplete_fraction),
+        "bootstrap_replicates": replicates,
+        "primary_kpi": primary_name,
+        "guardrail_kpi": guardrail_name,
+        "guardrail_margin": margin,
+    }
+    input_hash = hashlib.sha256(
+        json.dumps(input_material, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    snapshot: dict[str, object] = {
+        **input_material,
+        "input_hash": input_hash,
+        "method": "paired person-cluster bootstrap; Holm adjustment across three outcomes",
+        "baseline_call_count": len(baseline_facts),
+        "post_call_count": len(post_facts),
+        "excluded_baseline_invalid": sum(
+            fact.quality != "valid" for fact in baseline_facts
+        ),
+        "excluded_post_invalid": sum(fact.quality != "valid" for fact in post_facts),
+        "sufficient": sufficient,
+        "harmful": harmful,
+        "comparisons": metrics,
+    }
+    remediation_id = None
+    remediation_evidence = None
+    if harmful:
+        remediation_id = (
+            "inc-"
+            + hashlib.sha256(
+                f"{incident_id}:{applied['version']}:{cutoff_event_id}:remediation".encode()
+            ).hexdigest()[:32]
+        )
+        snapshot["remediation_incident_id"] = remediation_id
+        qa = metrics["hallucination_rate"]
+        remediation_evidence = {
+            "sufficient": True,
+            "reason": "Fixed-window post-apply evidence crossed the documented incident harm rule",
+            "parent_incident_id": incident_id,
+            "cutoff_event_id": cutoff_event_id,
+            "person_count": min(
+                int(item["paired_people"]) for item in metrics.values()
+            ),
+            "hallucination_rate": qa["post_rate"],
+            "lower": qa["lower"],
+            "upper": qa["upper"],
+            "post_apply_monitoring": snapshot,
+            "suggestion": {"current_prompt_version": config["prompt_version"]},
+        }
+
+    async with store.transaction() as session:
+        from sqlalchemy import select
+
+        from controller.storage.models import IncidentRecord
+
+        record = await session.scalar(
+            select(IncidentRecord)
+            .where(IncidentRecord.incident_id == incident_id)
+            .with_for_update()
+        )
+        if record is None:
+            raise ValueError(f"unknown incident {incident_id!r}")
+        previous = record.evidence.get("post_apply_monitoring")
+        if isinstance(previous, dict):
+            if previous.get("input_hash") != input_hash:
+                raise IncidentStateConflictError(
+                    "monitoring already has a different frozen input cutoff"
+                )
+            return previous
+        record.evidence = {**record.evidence, "post_apply_monitoring": snapshot}
+        record.status = "monitoring_complete"
+        record.timeline = [
+            *record.timeline,
+            {
+                "event": "post_apply_monitoring_complete",
+                "cutoff_event_id": cutoff_event_id,
+                "harmful": harmful,
+                "sufficient": sufficient,
+                "input_hash": input_hash,
+            },
+        ]
+        remediation_created = False
+        if harmful and remediation_id is not None and remediation_evidence is not None:
+            _, remediation_created = await store.save_incident(
+                session,
+                incident_id=remediation_id,
+                workflow_id=incident.workflow_id,
+                trigger_config_version=applied["version"],
+                status="evidence_recorded",
+                evidence=remediation_evidence,
+                timeline=[
+                    {
+                        "event": "remediation_evidence_recorded",
+                        "parent_incident_id": incident_id,
+                        "cutoff_event_id": cutoff_event_id,
+                        "evidence": remediation_evidence,
+                    }
+                ],
+            )
+        await audit.append(
+            session,
+            AuditEntry(
+                action="incident_post_apply_monitoring",
+                actor="controller",
+                reason=(
+                    "Post-apply evidence supports a corrective proposal"
+                    if harmful
+                    else "Post-apply evidence does not establish a harmful change"
+                    if sufficient
+                    else "Post-apply evidence is insufficient"
+                ),
+                workflow_id=incident.workflow_id,
+                resource_type="incident",
+                resource_id=incident_id,
+                evidence=snapshot,
+            ),
+        )
+        if remediation_created and remediation_id is not None:
+            await audit.append(
+                session,
+                AuditEntry(
+                    action="incident_remediation_evidence_recorded",
+                    actor="controller",
+                    reason="Created a follow-up incident against the current applied config",
+                    workflow_id=incident.workflow_id,
+                    resource_type="incident",
+                    resource_id=remediation_id,
+                    evidence=remediation_evidence or {},
+                ),
+            )
+    return snapshot
+
+
+async def propose_monitoring_correction(
+    simulator: IncidentSuggestionAPI,
+    store: DatabaseStore,
+    audit: AuditLog,
+    *,
+    monitoring_result: dict[str, object],
+    validation_sample_size: int,
+) -> dict[str, object]:
+    """Generate, validate and submit one deterministic follow-up candidate.
+
+    Candidate order is sorted by stable prompt ID; the LLM summary/order never
+    selects a winner. Safety validation is a required gate, followed by human
+    approval. No apply request is sent here.
+    """
+    remediation_id = monitoring_result.get("remediation_incident_id")
+    if monitoring_result.get("harmful") is not True or not isinstance(
+        remediation_id, str
+    ):
+        return {
+            "status": "no_remediation",
+            "reason": "monitoring evidence did not establish harm",
+        }
+    incident = await store.get_incident(remediation_id)
+    if incident is None:
+        raise ValueError("monitoring result references a missing remediation incident")
+    comparisons = monitoring_result.get("comparisons")
+    harmful_metrics = (
+        [
+            name
+            for name, result in comparisons.items()
+            if isinstance(result, dict) and result.get("harmful") is True
+        ]
+        if isinstance(comparisons, dict)
+        else []
+    )
+    problem = (
+        f"Fixed-window post-apply evidence found adverse population outcomes on "
+        f"{', '.join(sorted(harmful_metrics))}; hallucination rate was "
+        f"{incident.evidence.get('hallucination_rate')} at cutoff "
+        f"{incident.evidence.get('cutoff_event_id')}. Provide alternative prompt candidates."
+    )
+    suggestions = await request_candidate_suggestions(
+        simulator, store, audit, incident_id=remediation_id, problem=problem
+    )
+    if suggestions.get("status") != "candidates_ready":
+        return {
+            "status": suggestions.get("status", "suggestion_failed"),
+            "incident_id": remediation_id,
+        }
+    # Suggestion generation persists candidate evidence. Reload before using it;
+    # the incident fetched above predates that external request and transition.
+    incident = await store.get_incident(remediation_id)
+    if incident is None:
+        raise ValueError("remediation incident disappeared after candidate generation")
+    current_prompt = incident.evidence.get("suggestion", {}).get(
+        "current_prompt_version"
+    )
+    candidates = incident.evidence.get("suggestion", {}).get("candidates", [])
+    ordered = sorted(
+        (item for item in candidates if isinstance(item, dict)),
+        key=lambda item: item.get("prompt_version", ""),
+    )
+    for candidate in ordered:
+        prompt_version = candidate.get("prompt_version")
+        if not isinstance(prompt_version, str) or prompt_version == current_prompt:
+            continue
+        validation = await validate_incident_candidate(
+            simulator,
+            store,
+            audit,
+            incident_id=remediation_id,
+            prompt_version=prompt_version,
+            sample_size=validation_sample_size,
+        )
+        if validation.get("status") == "candidate_validated":
+            proposal = await submit_governed_prompt_proposal(
+                simulator,
+                store,
+                audit,
+                incident_id=remediation_id,
+                prompt_version=prompt_version,
+            )
+            return {
+                "status": "proposal_submitted"
+                if proposal is not None
+                else "proposal_skipped",
+                "incident_id": remediation_id,
+                "prompt_version": prompt_version,
+                "proposal": proposal,
+            }
+        if validation.get("status") not in {"candidate_rejected", "validation_failed"}:
+            return {
+                "status": validation.get("status", "validation_failed"),
+                "incident_id": remediation_id,
+            }
+    return {"status": "no_validated_candidate", "incident_id": remediation_id}
+
+
+async def _incident_monitor_facts(
+    store: DatabaseStore,
+    *,
+    workflow_id: str,
+    config_version: int,
+    start_at: datetime,
+    end_at: datetime,
+    cutoff_event_id: int,
+    page_size: int,
+):
+    facts = []
+    after = 0
+    while True:
+        page = await store.list_incident_monitor_facts(
+            workflow_id=workflow_id,
+            config_version=config_version,
+            start_at=start_at,
+            end_at=end_at,
+            cutoff_event_id=cutoff_event_id,
+            after_event_id=after,
+            limit=page_size,
+        )
+        if not page:
+            return facts
+        facts.extend(page)
+        after = page[-1].source_event_id
+
+
+async def _record_monitor_block(
+    store: DatabaseStore,
+    audit: AuditLog,
+    incident_id: str,
+    *,
+    status: str,
+    reason: str,
+) -> dict[str, object]:
+    return await _incident_transition(
+        store,
+        audit,
+        incident_id,
+        status=status,
+        reason=reason,
+        entry={"event": status, "reason": reason},
+    )
+
+
+def _incident_objective(objective: object) -> tuple[str, str, float]:
+    if not isinstance(objective, dict):
+        raise TypeError("workflow objective is unavailable for incident monitoring")
+    primary = objective.get("primary")
+    guardrail = objective.get("guardrail")
+    if (
+        primary not in {"pickup_rate", "engagement_rate"}
+        or not isinstance(guardrail, dict)
+        or len(guardrail) != 1
+    ):
+        raise ValueError("workflow primary KPI and guardrail are malformed")
+    guardrail_name, margin = next(iter(guardrail.items()))
+    suffix = "_max_drop"
+    if not isinstance(guardrail_name, str) or not guardrail_name.endswith(suffix):
+        raise ValueError("workflow guardrail must specify its configured max-drop")
+    guardrail_name = guardrail_name[: -len(suffix)]
+    if (
+        guardrail_name not in {"pickup_rate", "engagement_rate"}
+        or guardrail_name == primary
+    ):
+        raise ValueError("workflow guardrail must be the other rate KPI")
+    if (
+        isinstance(margin, bool)
+        or not isinstance(margin, (int, float))
+        or not math.isfinite(margin)
+        or not 0 < margin <= 1
+    ):
+        raise ValueError("workflow guardrail margin is missing or invalid")
+    return primary, guardrail_name, float(margin)
+
+
+def _parse_timestamp(value: str) -> datetime | None:
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo is not None else None
+
+
+def _paired_metric_comparison(
+    metric: str,
+    baseline_facts: list[KpiFact],
+    post_facts: list[KpiFact],
+    *,
+    minimum_paired_people: int,
+    max_incomplete_fraction: float,
+    harm_threshold: float,
+    seed: str,
+    replicates: int,
+) -> dict[str, object]:
+    def rates(facts):
+        totals: dict[str, list[int]] = {}
+        considered = (
+            [
+                fact
+                for fact in facts
+                if fact.connected or fact.quality != "valid" or fact.person_id is None
+            ]
+            if metric == "hallucination_rate"
+            else facts
+        )
+        relevant = [
+            fact
+            for fact in considered
+            if fact.quality == "valid"
+            and fact.person_id
+            and (
+                metric != "hallucination_rate"
+                or (fact.qa_quality == "valid" and fact.qa_hallucination is not None)
+            )
+        ]
+        for fact in relevant:
+            if metric == "hallucination_rate":
+                success, trials = int(fact.qa_hallucination), 1
+            elif metric == "pickup_rate":
+                success, trials = fact.connected, fact.dials
+            else:
+                success, trials = fact.concluded, fact.connected
+            row = totals.setdefault(fact.person_id, [0, 0])
+            row[0] += success
+            row[1] += trials
+        return (
+            {
+                person: success / trials
+                for person, (success, trials) in totals.items()
+                if trials
+            },
+            sum(v[1] for v in totals.values()),
+            len(relevant),
+            len(considered),
+        )
+
+    before, before_trials, before_people_rows, before_total = rates(baseline_facts)
+    after, after_trials, after_people_rows, after_total = rates(post_facts)
+    shared = sorted(set(before) & set(after))
+    differences = [after[person] - before[person] for person in shared]
+    incomplete_before = 1 - before_people_rows / before_total if before_total else 1.0
+    incomplete_after = 1 - after_people_rows / after_total if after_total else 1.0
+    sufficient = (
+        len(shared) >= minimum_paired_people
+        and incomplete_before <= max_incomplete_fraction
+        and incomplete_after <= max_incomplete_fraction
+    )
+    if not sufficient:
+        return {
+            "baseline_rate": sum(before[p] for p in shared) / len(shared)
+            if shared
+            else 0.0,
+            "post_rate": sum(after[p] for p in shared) / len(shared) if shared else 0.0,
+            "difference": 0.0,
+            "lower": 0.0,
+            "upper": 0.0,
+            "paired_people": len(shared),
+            "baseline_trials": before_trials,
+            "post_trials": after_trials,
+            "sufficient": False,
+            "p_value": 1.0,
+        }
+    estimate = sum(differences) / len(differences)
+    rng = random.Random(
+        int.from_bytes(hashlib.sha256(seed.encode()).digest()[:8], "big")
+    )
+    samples = sorted(
+        sum(rng.choice(differences) for _ in differences) / len(differences)
+        for _ in range(replicates)
+    )
+    null_threshold = estimate - harm_threshold
+    null_tail = (
+        sum(sample - estimate >= null_threshold for sample in samples)
+        if metric == "hallucination_rate"
+        else sum(sample - estimate <= null_threshold for sample in samples)
+    )
+    return {
+        "baseline_rate": sum(before[p] for p in shared) / len(shared),
+        "post_rate": sum(after[p] for p in shared) / len(shared),
+        "difference": estimate,
+        "lower": _quantile(samples, 0.05 / 6),
+        "upper": _quantile(samples, 1 - 0.05 / 6),
+        "paired_people": len(shared),
+        "baseline_trials": before_trials,
+        "post_trials": after_trials,
+        "sufficient": True,
+        "p_value": (null_tail + 1) / (replicates + 1),
+    }
 
 
 async def _incident_transition(

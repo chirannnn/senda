@@ -649,6 +649,57 @@ class DatabaseStore:
         async with self._sessions() as session:
             return list((await session.scalars(statement)).all())
 
+    async def list_incident_monitor_facts(
+        self,
+        *,
+        workflow_id: str,
+        config_version: int,
+        start_at: datetime,
+        end_at: datetime,
+        cutoff_event_id: int,
+        after_event_id: int = 0,
+        limit: int = 1000,
+    ) -> list[KpiFact]:
+        """Read bounded calls, including classified incomplete rows, for a fixed window."""
+        if (
+            not workflow_id
+            or isinstance(config_version, bool)
+            or not isinstance(config_version, int)
+            or config_version < 0
+            or isinstance(cutoff_event_id, bool)
+            or not isinstance(cutoff_event_id, int)
+            or cutoff_event_id < 0
+            or isinstance(after_event_id, bool)
+            or not isinstance(after_event_id, int)
+            or after_event_id < 0
+            or isinstance(limit, bool)
+            or not isinstance(limit, int)
+            or limit < 1
+            or start_at.tzinfo is None
+            or end_at.tzinfo is None
+            or end_at <= start_at
+        ):
+            raise ValueError(
+                "incident monitoring query identity and window are invalid"
+            )
+        statement = (
+            select(KpiFact)
+            .where(
+                KpiFact.workflow_id == workflow_id,
+                KpiFact.config_version == config_version,
+                KpiFact.event_type == "call",
+                KpiFact.occurred_at >= start_at,
+                KpiFact.occurred_at < end_at,
+                KpiFact.source_event_id <= cutoff_event_id,
+                KpiFact.source_event_id > after_event_id,
+            )
+            .order_by(KpiFact.source_event_id)
+            .limit(limit)
+        )
+        self._ensure_open()
+        async with self._sessions() as session:
+            return list((await session.scalars(statement)).all())
+
     async def get_incident(self, incident_id: str) -> IncidentRecord | None:
         self._ensure_open()
         async with self._sessions() as session:

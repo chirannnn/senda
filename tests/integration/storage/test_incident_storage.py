@@ -1,9 +1,13 @@
 """PostgreSQL persistence guarantees for incident evidence."""
 
+from datetime import datetime
+
 import pytest
 
 from controller.errors import AmbiguousPostError, SimulatorHTTPError
 from controller.incidents import (
+    monitor_applied_prompt,
+    propose_monitoring_correction,
     reconcile_incident_approval,
     request_candidate_suggestions,
     submit_governed_prompt_proposal,
@@ -11,7 +15,8 @@ from controller.incidents import (
     validation_credit_cost,
 )
 from controller.storage.audit import AuditEntry, AuditLog, AuditQuery
-from controller.storage.store import DatabaseStore
+from controller.storage.models import IncidentRecord, KpiFact, SimulatorEvent
+from controller.storage.store import DatabaseStore, IncidentStateConflictError
 
 
 @pytest.mark.anyio
@@ -245,11 +250,23 @@ async def _seed_validated_incident(store, incident_id, workflow_id):
 
 
 class _ProposalAPI:
-    def __init__(self, workflow_id, approval_status="pending", config_version=3):
+    def __init__(
+        self,
+        workflow_id,
+        approval_status="pending",
+        config_version=3,
+        current_prompt="P1",
+        prompt_options=("P1", "P2"),
+    ):
         self.workflow_id = workflow_id
         self.approval_status = approval_status
         self.config_version = config_version
-        self.config = {"prompt_version": "P1", "cohorts": [], "allocations": {}}
+        self.config = {
+            "prompt_version": current_prompt,
+            "cohorts": [],
+            "allocations": {},
+        }
+        self.prompt_options = list(prompt_options)
         self.approval = None
         self.request = None
         self.applies = 0
@@ -266,8 +283,12 @@ class _ProposalAPI:
         return [
             {
                 "workflow_id": self.workflow_id,
-                "options": {"prompt_version": ["P1", "P2"]},
+                "options": {"prompt_version": self.prompt_options},
                 "governance": {"min_validation_pass_rate": 0.9},
+                "objective": {
+                    "primary": "engagement_rate",
+                    "guardrail": {"pickup_rate_max_drop": 0.1},
+                },
             }
         ]
 
@@ -319,6 +340,163 @@ class _ProposalAPI:
 
     async def get_config_history(self, workflow_id):
         return list(self.history)
+
+
+class _CorrectionAPI(_ProposalAPI):
+    def __init__(self, workflow_id):
+        super().__init__(
+            workflow_id,
+            config_version=4,
+            current_prompt="P2",
+            prompt_options=("P1", "P2", "P3", "P4"),
+        )
+        self.credits = 20
+        self.validated = []
+
+    async def get_state(self):
+        return {"credits_remaining": self.credits}
+
+    async def suggest_fixes(self, workflow_id, problem):
+        self.credits -= 3
+        return {
+            "suggestions": [
+                {"prompt_version": "P4", "summary": "Second safe candidate"},
+                {"prompt_version": "P3", "summary": "First unsafe candidate"},
+            ],
+            "credits_remaining": self.credits,
+        }
+
+    async def run_validation(self, workflow_id, prompt_version, sample_size):
+        self.validated.append(prompt_version)
+        self.credits -= validation_credit_cost(sample_size)
+        failures = 20 if prompt_version == "P3" else 4
+        return {
+            "validation_run_id": f"val-{prompt_version}",
+            "workflow_id": workflow_id,
+            "prompt_version": prompt_version,
+            "n": sample_size,
+            "failures": failures,
+            "pass_rate": 1 - failures / sample_size,
+            "ts": "2027-01-06T00:00:00+05:30",
+            "credits_remaining": self.credits,
+        }
+
+
+class _MonitorAPI:
+    def __init__(self, workflow_id="workflow-monitor"):
+        self.workflow_id = workflow_id
+        self.version = 4
+        self.config = {"prompt_version": "P2"}
+        self.history = [
+            {
+                "version": 3,
+                "actor": "supervisor",
+                "changed_dims": ["prompt_version"],
+                "applied_at": "2027-01-04T00:00:00+05:30",
+                "proposal_id": None,
+                "approval_id": None,
+            },
+            {
+                "version": 4,
+                "actor": "controller_approved",
+                "changed_dims": ["prompt_version"],
+                "applied_at": "2027-01-05T00:00:00+05:30",
+                "proposal_id": "proposal-monitor",
+                "approval_id": "approval-monitor",
+            },
+        ]
+
+    async def get_workflow_config(self, workflow_id):
+        return {
+            "workflow_id": workflow_id,
+            "version": self.version,
+            "config": self.config,
+        }
+
+    async def list_workflows(self):
+        return [
+            {
+                "workflow_id": self.workflow_id,
+                "objective": {
+                    "primary": "engagement_rate",
+                    "guardrail": {"pickup_rate_max_drop": 0.1},
+                },
+            }
+        ]
+
+    async def get_config_history(self, workflow_id):
+        return self.history
+
+
+async def _seed_applied_incident(
+    store,
+    incident_id="incident-monitor",
+    workflow_id="workflow-monitor",
+    post_hallucination=True,
+):
+    async with store.transaction() as session:
+        await store.ensure_workflow(session, workflow_id)
+        session.add(
+            IncidentRecord(
+                incident_id=incident_id,
+                workflow_id=workflow_id,
+                trigger_config_version=3,
+                status="applied",
+                evidence={
+                    "proposal": {
+                        "proposal_id": "proposal-monitor",
+                        "approval_id": "approval-monitor",
+                        "base_version": 3,
+                    }
+                },
+                timeline=[{"event": "applied"}],
+            )
+        )
+        for person_index in range(30):
+            for offset, (version, timestamp, hallucination) in enumerate(
+                (
+                    (3, "2027-01-04T12:00:00+05:30", False),
+                    (4, "2027-01-05T12:00:00+05:30", post_hallucination),
+                )
+            ):
+                event_id = person_index * 2 + offset + 1
+                payload = {"type": "call", "workflow_id": workflow_id}
+                session.add(
+                    SimulatorEvent(
+                        event_id=event_id,
+                        chunk_number=1,
+                        kind="events",
+                        payload=payload,
+                    )
+                )
+                await session.flush()
+                session.add(
+                    KpiFact(
+                        source_event_id=event_id,
+                        source_chunk=1,
+                        source_kind="events",
+                        workflow_id=workflow_id,
+                        event_type="call",
+                        occurred_at=datetime.fromisoformat(timestamp),
+                        campaign_id="campaign-1",
+                        lead_id=f"lead-{person_index}-{version}",
+                        person_id=f"person-{person_index}",
+                        config_version=version,
+                        observed_cohort_id="default",
+                        variant={"prompt_version": "P1" if version == 3 else "P2"},
+                        features={},
+                        quality="valid",
+                        quality_detail=None,
+                        dials=1,
+                        connected=1,
+                        concluded=1,
+                        uploaded=0,
+                        qa_hallucination=hallucination,
+                        qa_flow_adherence=0.9,
+                        qa_quality="valid",
+                    )
+                )
+        await session.flush()
 
 
 @pytest.mark.anyio
@@ -681,4 +859,113 @@ async def test_rejected_expired_and_lapsed_approvals_do_not_apply(
         simulator, postgres_store, audit, incident_id=incident_id
     )
     assert result["status"] == f"approval_{remote_status}"
+    assert simulator.applies == 0
+
+
+@pytest.mark.anyio
+async def test_post_apply_monitor_detects_population_harm_and_freezes_cutoff(
+    postgres_store,
+):
+    await _seed_applied_incident(postgres_store)
+    simulator = _MonitorAPI()
+    audit = AuditLog(postgres_store)
+    arguments = {
+        "incident_id": "incident-monitor",
+        "monitor_end": datetime.fromisoformat("2027-01-06T00:00:00+05:30"),
+        "cutoff_event_id": 60,
+        "minimum_paired_people": 30,
+        "max_incomplete_fraction": 0,
+        "replicates": 1000,
+    }
+    result = await monitor_applied_prompt(simulator, postgres_store, audit, **arguments)
+    assert result["sufficient"] is True
+    assert result["harmful"] is True
+    qa = result["comparisons"]["hallucination_rate"]
+    assert qa["baseline_rate"] == 0
+    assert qa["post_rate"] == 1
+    assert qa["paired_people"] == 30
+    assert qa["adjusted_p"] <= 0.05
+    remediation_id = result["remediation_incident_id"]
+    remediation = await postgres_store.get_incident(remediation_id)
+    assert remediation.status == "evidence_recorded"
+    assert remediation.trigger_config_version == 4
+    assert remediation.evidence["suggestion"]["current_prompt_version"] == "P2"
+
+    repeated = await monitor_applied_prompt(
+        simulator, postgres_store, audit, **arguments
+    )
+    assert repeated == result
+    with pytest.raises(
+        IncidentStateConflictError, match="different frozen input cutoff"
+    ):
+        await monitor_applied_prompt(
+            simulator,
+            postgres_store,
+            audit,
+            **{**arguments, "cutoff_event_id": 61},
+        )
+    final = await postgres_store.get_incident("incident-monitor")
+    assert final.status == "monitoring_complete"
+    assert [entry["event"] for entry in final.timeline].count(
+        "post_apply_monitoring_complete"
+    ) == 1
+
+
+@pytest.mark.anyio
+async def test_post_apply_monitor_healthy_signal_creates_no_remediation(postgres_store):
+    await _seed_applied_incident(
+        postgres_store,
+        "incident-monitor-healthy",
+        "workflow-monitor",
+        post_hallucination=False,
+    )
+    result = await monitor_applied_prompt(
+        _MonitorAPI(),
+        postgres_store,
+        AuditLog(postgres_store),
+        incident_id="incident-monitor-healthy",
+        monitor_end=datetime.fromisoformat("2027-01-06T00:00:00+05:30"),
+        cutoff_event_id=60,
+        minimum_paired_people=30,
+        max_incomplete_fraction=0,
+        replicates=500,
+    )
+    assert result["sufficient"] is True
+    assert result["harmful"] is False
+    assert "remediation_incident_id" not in result
+
+
+@pytest.mark.anyio
+async def test_harmful_post_apply_evidence_submits_only_a_validated_followup_proposal(
+    postgres_store,
+):
+    await _seed_applied_incident(postgres_store)
+    monitor = await monitor_applied_prompt(
+        _MonitorAPI(),
+        postgres_store,
+        AuditLog(postgres_store),
+        incident_id="incident-monitor",
+        monitor_end=datetime.fromisoformat("2027-01-06T00:00:00+05:30"),
+        cutoff_event_id=60,
+        minimum_paired_people=30,
+        max_incomplete_fraction=0,
+        replicates=500,
+    )
+    simulator = _CorrectionAPI("workflow-monitor")
+    result = await propose_monitoring_correction(
+        simulator,
+        postgres_store,
+        AuditLog(postgres_store),
+        monitoring_result=monitor,
+        validation_sample_size=100,
+    )
+    remediation_id = monitor["remediation_incident_id"]
+    incident = await postgres_store.get_incident(remediation_id)
+    assert result["status"] == "proposal_submitted"
+    assert result["prompt_version"] == "P4"
+    assert simulator.validated == ["P3", "P4"]
+    assert simulator.request["base_version"] == 4
+    assert simulator.request["proposed_config"]["prompt_version"] == "P4"
+    assert simulator.request["evidence"]["validation_run_id"] == "val-P4"
+    assert incident.evidence["proposal"]["base_version"] == 4
     assert simulator.applies == 0
