@@ -4,7 +4,7 @@
 
 **Current phase:** Chunk 7 population-level incident workflow
 **Current chunk:** 7 ? Public incident workflow
-**Current next action:** Complete Chunk 7 subtasks sequentially; candidate validation is implemented.
+**Current next action:** Complete Chunk 7 subtasks sequentially; governed proposal integration is implemented.
 
 ## Implementation progress
 
@@ -16,7 +16,7 @@
 | 4 | History, KPI facts, audit query | COMPLETE | `79caf3d`, `bf4e93b`, `237d6b2`, `f640e9b`, `bd1f94b`, `b87a39b` |
 | 5 | Governance lifecycle | COMPLETE | `29d7e81`, `d04a0bf`, `40aca99`, `feb3c77`, `50fbc35`, `df4d945` |
 | 6 | Statistical comparison | COMPLETE | `7a3d228`, `eef6137`, `ecb6d92`, `dba33bf`, this completion commit |
-| 7 | Public incident workflow | IN PROGRESS | `3d28f68`, `7a4dadf`, current subtask commit |
+| 7 | Public incident workflow | IN PROGRESS | `3d28f68`, `7a4dadf`, `88f71bc`, current subtask commit |
 | 8 | Crash recovery demonstration | NOT STARTED | â€” |
 | 9 | Load and observability | NOT STARTED | â€” |
 | 10 | Submission and final grading | NOT STARTED | â€” |
@@ -248,7 +248,7 @@ Known limits: these are synthetic development-host measurements, not `public_03_
 |---|---|---|---|
 | 1. Incident evidence | COMPLETE | 11 focused unit tests and 2 isolated PostgreSQL storage tests passed; migration 0008 applied; Ruff, format, compileall and diff check passed | `3d28f68` |
 | 2. Credit-aware LLM suggestion | COMPLETE | 27 focused unit/PostgreSQL integration tests passed; Ruff, format, compileall and diff check passed | `7a4dadf` |
-| 3. Candidate validation | COMPLETE | 42 focused unit/PostgreSQL integration tests passed; Ruff, format, compileall, Alembic check and diff check passed | this subtask commit |
-| 4. Governed prompt proposal | NOT STARTED | — | — |
+| 3. Candidate validation | COMPLETE | 42 focused unit/PostgreSQL integration tests passed; Ruff, format, compileall, Alembic check and diff check passed | `88f71bc` |
+| 4. Governed prompt proposal | COMPLETE | 47 focused unit/PostgreSQL integration tests passed; Ruff, format, compileall, Alembic check and diff check passed | this subtask commit |
 | 5. Post-apply monitoring | NOT STARTED | — | — |
 | 6. Public scenario and acceptance | NOT STARTED | — | — |

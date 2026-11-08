@@ -8,7 +8,15 @@ import random
 from dataclasses import asdict, dataclass
 from typing import Any, Protocol
 
-from controller.errors import AmbiguousPostError, SimulatorError, SimulatorHTTPError
+from controller.errors import (
+    AmbiguousPostError,
+    ProposalReconciliationRequired,
+    SimulatorError,
+    SimulatorHTTPError,
+)
+from controller.governance.proposals import ProposalPayload, submit_proposal
+from controller.governance.reconcile import apply_approved_proposal
+from controller.governance.state_machine import ProposalStatus, poll_approval
 from controller.storage.audit import AuditEntry, AuditLog
 from controller.storage.models import KpiFact
 from controller.storage.store import DatabaseStore, IncidentStateConflictError
@@ -28,6 +36,20 @@ class IncidentSuggestionAPI(Protocol):
     async def run_validation(
         self, workflow_id: str, prompt_version: str, sample_size: int
     ) -> dict[str, Any]: ...
+
+    async def submit_approval(self, payload: dict[str, Any]) -> dict[str, Any]: ...
+
+    async def list_approvals(
+        self, *, workflow_id: str | None = None, status: str | None = None
+    ) -> list[dict[str, Any]]: ...
+
+    async def get_approval(self, approval_id: str) -> dict[str, Any]: ...
+
+    async def apply_approval(
+        self, workflow_id: str, approval_id: str
+    ) -> dict[str, Any]: ...
+
+    async def get_config_history(self, workflow_id: str) -> list[dict[str, Any]]: ...
 
 
 SUGGESTION_CREDIT_COST = 3.0
@@ -771,6 +793,311 @@ async def validate_incident_candidate(
             "credits_used_observed": used,
         },
     )
+
+
+async def submit_governed_prompt_proposal(
+    simulator: IncidentSuggestionAPI,
+    store: DatabaseStore,
+    audit: AuditLog,
+    *,
+    incident_id: str,
+    prompt_version: str,
+) -> dict[str, Any] | None:
+    """Submit exactly one validated prompt candidate through Chunk 5 approvals."""
+    incident = await store.get_incident(incident_id)
+    if incident is None:
+        raise ValueError(f"unknown incident {incident_id!r}")
+    validations = incident.evidence.get("validations", {})
+    validation = (
+        validations.get(prompt_version) if isinstance(validations, dict) else None
+    )
+    if (
+        incident.status != "candidate_validated"
+        or not isinstance(validation, dict)
+        or validation.get("status") != "passed"
+        or validation.get("prompt_version") != prompt_version
+        or validation.get("workflow_id") != incident.workflow_id
+        or validation.get("config_version") != incident.trigger_config_version
+        or validation.get("config_version_after") != incident.trigger_config_version
+    ):
+        await _incident_transition(
+            store,
+            audit,
+            incident_id,
+            status="proposal_skipped",
+            reason="No exact candidate validation passed for this incident and config version",
+            entry={
+                "event": "proposal_skipped",
+                "prompt_version": prompt_version,
+                "reason": "missing, unsafe or mismatched validation",
+            },
+        )
+        return None
+    proposal_evidence = incident.evidence.get("proposal")
+    if isinstance(proposal_evidence, dict) and isinstance(
+        proposal_evidence.get("proposal_id"), str
+    ):
+        existing_id = proposal_evidence["proposal_id"]
+        from controller.governance.reconcile import reconcile_approval_submission
+
+        response = await reconcile_approval_submission(
+            simulator, store, audit, existing_id
+        )
+        return response
+
+    current = await simulator.get_workflow_config(incident.workflow_id)
+    workflow = next(
+        (
+            item
+            for item in await simulator.list_workflows()
+            if item.get("workflow_id") == incident.workflow_id
+        ),
+        None,
+    )
+    version = current.get("version")
+    config = current.get("config")
+    options = workflow.get("options") if isinstance(workflow, dict) else None
+    prompts = options.get("prompt_version") if isinstance(options, dict) else None
+    governance = workflow.get("governance") if isinstance(workflow, dict) else None
+    floor = (
+        governance.get("min_validation_pass_rate")
+        if isinstance(governance, dict)
+        else None
+    )
+    if (
+        isinstance(version, bool)
+        or not isinstance(version, int)
+        or version != incident.trigger_config_version
+        or not isinstance(config, dict)
+        or config.get("prompt_version")
+        != incident.evidence.get("suggestion", {}).get("current_prompt_version")
+        or not isinstance(prompts, list)
+        or prompt_version not in prompts
+        or isinstance(floor, bool)
+        or not isinstance(floor, (int, float))
+        or not math.isfinite(floor)
+        or float(floor) != validation.get("minimum_pass_rate")
+    ):
+        await _incident_transition(
+            store,
+            audit,
+            incident_id,
+            status="proposal_stale",
+            reason="Workflow configuration or validation policy changed before proposal submission",
+            entry={
+                "event": "proposal_stale",
+                "prompt_version": prompt_version,
+                "expected_config_version": incident.trigger_config_version,
+                "current_config_version": version,
+            },
+        )
+        return None
+
+    evidence = {
+        "incident_id": incident_id,
+        "incident_evidence": incident.evidence,
+        "candidate_prompt_version": prompt_version,
+        "validation_run_id": validation["validation_run_id"],
+        "validation": validation,
+        "config_version": version,
+        "workflow_validation_floor": float(floor),
+        "decision": "submit_for_human_approval_only",
+    }
+    proposed_config = dict(config)
+    proposed_config["prompt_version"] = prompt_version
+    proposal_id = (
+        "incident-"
+        + hashlib.sha256(
+            f"{incident_id}:{version}:{prompt_version}:{validation['validation_run_id']}".encode()
+        ).hexdigest()[:32]
+    )
+    person_count = incident.evidence.get("person_count")
+    if (
+        isinstance(person_count, bool)
+        or not isinstance(person_count, int)
+        or person_count < 0
+    ):
+        await _incident_transition(
+            store,
+            audit,
+            incident_id,
+            status="proposal_skipped",
+            reason="Affected population count is missing or invalid",
+            entry={
+                "event": "proposal_skipped",
+                "reason": "invalid affected population",
+            },
+        )
+        return None
+    observed_rate = incident.evidence.get("hallucination_rate")
+    impact_score = (
+        float(observed_rate)
+        if isinstance(observed_rate, (int, float))
+        and not isinstance(observed_rate, bool)
+        and math.isfinite(observed_rate)
+        and 0 <= observed_rate <= 1
+        else 0.0
+    )
+    proposal = ProposalPayload(
+        proposal_id=proposal_id,
+        workflow_id=incident.workflow_id,
+        base_version=version,
+        proposed_config=proposed_config,
+        change_summary=f"Replace prompt {config['prompt_version']} with validated candidate {prompt_version}",
+        diff={
+            "dimension": "prompt_version",
+            "before": config["prompt_version"],
+            "after": prompt_version,
+        },
+        affected_leads=person_count,
+        dry_run={
+            "type": "observed_population_qa_and_safety_validation",
+            "historical_replay": False,
+            "estimated_effect": None,
+            "validation_is_safety_only": True,
+            "affected_people_observed": person_count,
+        },
+        impact_score=impact_score,
+        rationale=(
+            f"Population QA for config {version} observed hallucination flags in "
+            f"{impact_score:.4f} of person-clustered observations. Candidate {prompt_version} "
+            f"passed the workflow-configured safety floor ({validation['pass_rate']:.4f} >= "
+            f"{float(floor):.4f}, n={validation['sample_size']}). This requests approval only; "
+            "validation does not establish engagement improvement."
+        ),
+        evidence=evidence,
+    )
+    try:
+        response = await submit_proposal(simulator, store, audit, proposal)
+    except ProposalReconciliationRequired as exc:
+        await _incident_transition(
+            store,
+            audit,
+            incident_id,
+            status="approval_reconciliation_required",
+            reason="Approval submission could not be reconciled; no duplicate was sent",
+            entry={
+                "event": "approval_reconciliation_required",
+                "proposal_id": proposal_id,
+                "reason": str(exc),
+            },
+            evidence_update={
+                **incident.evidence,
+                "proposal": {"proposal_id": proposal_id, "status": "manual_review"},
+            },
+        )
+        return None
+
+    response_status = response.get("status")
+    incident_status = (
+        "approval_pending" if response_status == "pending" else "approval_submitted"
+    )
+    return await _incident_transition(
+        store,
+        audit,
+        incident_id,
+        status=incident_status,
+        reason="Validated prompt candidate submitted through the existing approval lifecycle",
+        evidence_update={
+            **incident.evidence,
+            "proposal": {
+                "proposal_id": proposal_id,
+                "approval_id": response.get("approval_id"),
+                "status": response_status,
+                "base_version": version,
+                "proposed_prompt_version": prompt_version,
+                "payload_hash": proposal.payload_hash,
+            },
+        },
+        entry={
+            "event": "approval_submitted",
+            "proposal_id": proposal_id,
+            "approval_id": response.get("approval_id"),
+            "remote_status": response_status,
+            "base_version": version,
+            "prompt_version": prompt_version,
+        },
+    )
+
+
+async def reconcile_incident_approval(
+    simulator: IncidentSuggestionAPI,
+    store: DatabaseStore,
+    audit: AuditLog,
+    *,
+    incident_id: str,
+) -> dict[str, object]:
+    """Poll the Chunk 5 approval state machine and apply only an approved proposal."""
+    incident = await store.get_incident(incident_id)
+    if incident is None:
+        raise ValueError(f"unknown incident {incident_id!r}")
+    proposal_evidence = incident.evidence.get("proposal")
+    proposal_id = (
+        proposal_evidence.get("proposal_id")
+        if isinstance(proposal_evidence, dict)
+        else None
+    )
+    if not isinstance(proposal_id, str):
+        raise TypeError("incident has no persisted governance proposal")
+    proposal = await store.get_governance_proposal(proposal_id)
+    if proposal is None or proposal.approval_id is None:
+        raise ProposalReconciliationRequired(
+            "incident proposal has no reconciled approval ID"
+        )
+    try:
+        status = await poll_approval(simulator, store, audit, proposal_id, max_polls=1)
+        if status == ProposalStatus.APPROVED:
+            result = await apply_approved_proposal(simulator, store, audit, proposal_id)
+            next_status = (
+                "applied"
+                if result.get("status") == ProposalStatus.APPLIED.value
+                else "apply_reconciliation_required"
+            )
+            return await _incident_transition(
+                store,
+                audit,
+                incident_id,
+                status=next_status,
+                reason="Chunk 5 governed apply lifecycle processed approved incident proposal",
+                entry={
+                    "event": next_status,
+                    "proposal_id": proposal_id,
+                    "apply_result": result,
+                },
+            )
+        mapping = {
+            ProposalStatus.PENDING: "approval_pending",
+            ProposalStatus.REJECTED: "approval_rejected",
+            ProposalStatus.EXPIRED: "approval_expired",
+            ProposalStatus.LAPSED: "approval_lapsed",
+            ProposalStatus.APPLIED: "applied",
+            ProposalStatus.STALE: "proposal_stale",
+            ProposalStatus.RECONCILIATION_REQUIRED: "approval_reconciliation_required",
+        }
+        next_status = mapping[status]
+        if next_status == incident.status:
+            return {"status": next_status, "proposal_id": proposal_id}
+        return await _incident_transition(
+            store,
+            audit,
+            incident_id,
+            status=next_status,
+            reason=f"Observed Chunk 5 approval state {status.value}",
+            entry={"event": next_status, "proposal_id": proposal_id},
+        )
+    except ProposalReconciliationRequired as exc:
+        return await _incident_transition(
+            store,
+            audit,
+            incident_id,
+            status="approval_reconciliation_required",
+            reason="Approval or apply state requires operator reconciliation",
+            entry={
+                "event": "approval_reconciliation_required",
+                "proposal_id": proposal_id,
+                "reason": str(exc),
+            },
+        )
 
 
 async def _incident_transition(

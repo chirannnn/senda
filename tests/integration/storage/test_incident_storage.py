@@ -4,7 +4,9 @@ import pytest
 
 from controller.errors import AmbiguousPostError, SimulatorHTTPError
 from controller.incidents import (
+    reconcile_incident_approval,
     request_candidate_suggestions,
+    submit_governed_prompt_proposal,
     validate_incident_candidate,
     validation_credit_cost,
 )
@@ -205,6 +207,118 @@ async def _seed_candidate_incident(store, incident_id, workflow_id):
             },
             timeline=[{"event": "candidates_ready"}],
         )
+
+
+async def _seed_validated_incident(store, incident_id, workflow_id):
+    async with store.transaction() as session:
+        await store.ensure_workflow(session, workflow_id)
+        await store.save_incident(
+            session,
+            incident_id=incident_id,
+            workflow_id=workflow_id,
+            trigger_config_version=3,
+            status="candidate_validated",
+            evidence={
+                "sufficient": True,
+                "cutoff_event_id": 100,
+                "person_count": 42,
+                "hallucination_rate": 0.4,
+                "lower": 0.2,
+                "upper": 0.6,
+                "suggestion": {"current_prompt_version": "P1"},
+                "validations": {
+                    "P2": {
+                        "status": "passed",
+                        "workflow_id": workflow_id,
+                        "prompt_version": "P2",
+                        "config_version": 3,
+                        "config_version_after": 3,
+                        "validation_run_id": "val_00009",
+                        "sample_size": 100,
+                        "pass_rate": 0.95,
+                        "minimum_pass_rate": 0.9,
+                    }
+                },
+            },
+            timeline=[{"event": "candidate_validated"}],
+        )
+
+
+class _ProposalAPI:
+    def __init__(self, workflow_id, approval_status="pending", config_version=3):
+        self.workflow_id = workflow_id
+        self.approval_status = approval_status
+        self.config_version = config_version
+        self.config = {"prompt_version": "P1", "cohorts": [], "allocations": {}}
+        self.approval = None
+        self.request = None
+        self.applies = 0
+        self.history = []
+
+    async def get_workflow_config(self, workflow_id):
+        return {
+            "workflow_id": workflow_id,
+            "version": self.config_version,
+            "config": self.config,
+        }
+
+    async def list_workflows(self):
+        return [
+            {
+                "workflow_id": self.workflow_id,
+                "options": {"prompt_version": ["P1", "P2"]},
+                "governance": {"min_validation_pass_rate": 0.9},
+            }
+        ]
+
+    async def submit_approval(self, payload):
+        self.request = payload
+        self.approval = {
+            "approval_id": "apr-incident-1",
+            "proposal_id": payload["proposal_id"],
+            "workflow_id": payload["workflow_id"],
+            "status": "pending",
+            "base_version": payload["base_version"],
+            "changed_dims": ["prompt_version"],
+        }
+        return dict(self.approval)
+
+    async def get_approval(self, approval_id):
+        result = dict(self.approval)
+        result["status"] = self.approval_status
+        return result
+
+    async def list_approvals(self, *, workflow_id=None, status=None):
+        if self.approval is None:
+            return []
+        result = dict(self.approval)
+        result["status"] = self.approval_status
+        return [result]
+
+    async def apply_approval(self, workflow_id, approval_id):
+        if self.approval_status != "approved":
+            raise AssertionError("apply was called before approval")
+        self.applies += 1
+        self.config = {**self.config, "prompt_version": "P2"}
+        self.config_version += 1
+        self.approval_status = "applied"
+        self.history.append(
+            {
+                "version": self.config_version,
+                "actor": "controller_approved",
+                "changed_dims": ["prompt_version"],
+                "proposal_id": self.approval["proposal_id"],
+                "approval_id": approval_id,
+            }
+        )
+        return {
+            "workflow_id": workflow_id,
+            "version": self.config_version,
+            "changed_dims": ["prompt_version"],
+        }
+
+    async def get_config_history(self, workflow_id):
+        return list(self.history)
 
 
 @pytest.mark.anyio
@@ -466,3 +580,105 @@ async def test_validation_stale_ambiguous_and_insufficient_credit_paths(postgres
     )
     assert poor["status"] == "insufficient_credits"
     assert poor_api.validation_posts == 0
+
+
+@pytest.mark.anyio
+async def test_prompt_proposal_uses_governance_and_apply_requires_approval(
+    postgres_store,
+):
+    incident_id, workflow_id = "incident-proposal", "workflow-proposal"
+    await _seed_validated_incident(postgres_store, incident_id, workflow_id)
+    simulator = _ProposalAPI(workflow_id)
+    audit = AuditLog(postgres_store)
+    submitted = await submit_governed_prompt_proposal(
+        simulator,
+        postgres_store,
+        audit,
+        incident_id=incident_id,
+        prompt_version="P2",
+    )
+    record = await postgres_store.get_incident(incident_id)
+    assert submitted["status"] == "approval_pending"
+    assert record.status == "approval_pending"
+    assert simulator.applies == 0
+    assert simulator.request["proposed_config"]["prompt_version"] == "P2"
+    assert simulator.request["diff"] == {
+        "dimension": "prompt_version",
+        "before": "P1",
+        "after": "P2",
+    }
+    assert (
+        simulator.request["evidence"]["validation"]["validation_run_id"] == "val_00009"
+    )
+    assert simulator.request["evidence"]["validation_run_id"] == "val_00009"
+
+    pending = await reconcile_incident_approval(
+        simulator, postgres_store, audit, incident_id=incident_id
+    )
+    assert pending["status"] == "approval_pending"
+    assert simulator.applies == 0
+
+    simulator.approval_status = "approved"
+    applied = await reconcile_incident_approval(
+        simulator, postgres_store, audit, incident_id=incident_id
+    )
+    assert applied["status"] == "applied"
+    assert simulator.applies == 1
+    final = await postgres_store.get_incident(incident_id)
+    assert final.status == "applied"
+    assert final.evidence["proposal"]["base_version"] == 3
+
+
+@pytest.mark.anyio
+async def test_stale_validated_candidate_does_not_submit_approval(postgres_store):
+    incident_id, workflow_id = "incident-stale-proposal", "workflow-stale-proposal"
+    await _seed_validated_incident(postgres_store, incident_id, workflow_id)
+    simulator = _ProposalAPI(workflow_id, config_version=4)
+    result = await submit_governed_prompt_proposal(
+        simulator,
+        postgres_store,
+        AuditLog(postgres_store),
+        incident_id=incident_id,
+        prompt_version="P2",
+    )
+    record = await postgres_store.get_incident(incident_id)
+    assert result is None
+    assert record.status == "proposal_stale"
+    assert simulator.request is None
+    assert simulator.applies == 0
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("remote_status", ["rejected", "expired", "lapsed"])
+async def test_rejected_expired_and_lapsed_approvals_do_not_apply(
+    postgres_store, remote_status
+):
+    incident_id = f"incident-{remote_status}"
+    workflow_id = f"workflow-{remote_status}"
+    await _seed_validated_incident(postgres_store, incident_id, workflow_id)
+    simulator = _ProposalAPI(workflow_id)
+    audit = AuditLog(postgres_store)
+    await submit_governed_prompt_proposal(
+        simulator,
+        postgres_store,
+        audit,
+        incident_id=incident_id,
+        prompt_version="P2",
+    )
+    if remote_status == "lapsed":
+        incident = await postgres_store.get_incident(incident_id)
+        proposal_id = incident.evidence["proposal"]["proposal_id"]
+        async with postgres_store.transaction() as session:
+            await postgres_store.update_governance_proposal(
+                session,
+                proposal_id,
+                status="approved",
+                approval_id="apr-incident-1",
+                remote_status="approved",
+            )
+    simulator.approval_status = remote_status
+    result = await reconcile_incident_approval(
+        simulator, postgres_store, audit, incident_id=incident_id
+    )
+    assert result["status"] == f"approval_{remote_status}"
+    assert simulator.applies == 0
