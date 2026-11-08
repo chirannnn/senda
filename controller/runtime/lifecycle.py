@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Protocol
@@ -19,6 +20,7 @@ from controller.ingestion.runner import (
 from controller.ingestion.service import EventIngestionService
 from controller.storage.audit import AuditLog
 from controller.storage.store import DatabaseStore
+from controller.telemetry import RuntimeTelemetry
 
 logger = logging.getLogger(__name__)
 
@@ -48,8 +50,10 @@ async def run_controller(
     simulator: SimulatorAPI,
     stop_event: asyncio.Event,
     store: DatabaseStore | None = None,
+    telemetry: RuntimeTelemetry | None = None,
 ) -> RuntimeOutcome:
     """Check readiness, then advance until finished or asked to stop."""
+    metrics = telemetry or RuntimeTelemetry()
     await simulator.get_health()
     workflows = await simulator.list_workflows()
     state = await simulator.get_state()
@@ -57,31 +61,46 @@ async def run_controller(
         "simulator ready",
         extra={"event": "startup_ready", "workflow_count": len(workflows)},
     )
-    ingestion = EventIngestionService(simulator) if store is not None else None
+    metrics.record_initial_credits(state)
+    metrics.record_state(state)
+    ingestion = (
+        EventIngestionService(simulator, telemetry=metrics)
+        if store is not None
+        else None
+    )
     fact_processor = KpiFactProcessor(store) if store is not None else None
     audit = AuditLog(store) if store is not None else None
     if store is not None and ingestion is not None:
         await ingestion.ingest_available_chunks(store)
         await reconcile_pending_advances(simulator, store, service=ingestion)
-        await _process_facts(fact_processor)
+        await _process_facts(fact_processor, metrics)
         state = await simulator.get_state()
+        metrics.record_state(state)
         await _process_incidents(
             simulator, store, audit, state, final=_is_finished(state)
         )
     if _is_finished(state):
+        await _emit_metrics(metrics, store)
         return RuntimeOutcome(completed=True, stopped=False)
 
     while not stop_event.is_set():
         if store is not None:
+            advance_started = time.perf_counter()
             result = await advance_and_ingest(
                 simulator, store, settings.advance_minutes, service=ingestion
             )
-            await _process_facts(fact_processor)
+            metrics.observe(
+                "advance_and_ingest_seconds", time.perf_counter() - advance_started
+            )
+            await _process_facts(fact_processor, metrics)
             state = await simulator.get_state()
+            metrics.record_state(state)
             await _process_incidents(
                 simulator, store, audit, state, final=result.finished
             )
+            heartbeat = await _heartbeat_fields(metrics, store, state)
             if result.finished:
+                await _emit_metrics(metrics, store)
                 return RuntimeOutcome(completed=True, stopped=False)
             logger.info(
                 "simulator advanced and chunks committed",
@@ -90,6 +109,7 @@ async def run_controller(
                     "simulated_time": result.simulated_time,
                     "chunks_committed": result.chunks_committed,
                     "events_inserted": result.events_inserted,
+                    **heartbeat,
                 },
             )
             continue
@@ -112,6 +132,7 @@ async def run_controller(
             raise
 
         finished = _is_finished(result)
+        metrics.record_state(result)
         logger.info(
             "simulator advanced",
             extra={
@@ -122,15 +143,23 @@ async def run_controller(
             },
         )
         if finished:
+            await _emit_metrics(metrics, store)
             return RuntimeOutcome(completed=True, stopped=False)
 
+    await _emit_metrics(metrics, store)
     return RuntimeOutcome(completed=False, stopped=True)
 
 
-async def _process_facts(processor: KpiFactProcessor | None) -> None:
+async def _process_facts(
+    processor: KpiFactProcessor | None, telemetry: RuntimeTelemetry
+) -> None:
     if processor is None:
         return
+    started = time.perf_counter()
     scanned, inserted = await processor.process_available()
+    telemetry.record_fact_processing(
+        scanned=scanned, inserted=inserted, seconds=time.perf_counter() - started
+    )
     if scanned:
         logger.info(
             "persisted event-derived KPI facts",
@@ -140,6 +169,63 @@ async def _process_facts(processor: KpiFactProcessor | None) -> None:
                 "facts_inserted": inserted,
             },
         )
+
+
+async def _emit_metrics(
+    telemetry: RuntimeTelemetry, store: DatabaseStore | None
+) -> None:
+    if store is not None:
+        telemetry.set_database_snapshot(await store.get_observability_snapshot())
+    logger.info(
+        "controller runtime metrics",
+        extra={"event": "runtime_metrics", "metrics": telemetry.export()},
+    )
+
+
+async def _heartbeat_fields(
+    telemetry: RuntimeTelemetry,
+    store: DatabaseStore | None,
+    state: dict[str, Any],
+) -> dict[str, Any]:
+    snapshot = telemetry.export()
+    api = snapshot["api"]
+    api_requests = sum(item["requests"] for item in api.values())
+    api_failures = sum(item["failures"] for item in api.values())
+    api_retryable = sum(item["retryable_responses"] for item in api.values())
+    fields: dict[str, Any] = {
+        "simulator_finished": state.get("finished"),
+        "credits_remaining": state.get("credits_remaining"),
+        "pending_chunks": snapshot["latest"].get("pending_chunks"),
+        "api_requests": api_requests,
+        "api_failures": api_failures,
+        "api_retryable_responses": api_retryable,
+    }
+    if store is not None:
+        progress = await store.get_runtime_heartbeat()
+        fields.update(progress)
+        current_ts = state.get("ts")
+        latest_fact = progress.get("latest_fact_at")
+        if isinstance(current_ts, str) and isinstance(latest_fact, str):
+            try:
+                current = datetime.fromisoformat(current_ts)
+                latest = datetime.fromisoformat(latest_fact)
+            except ValueError:
+                pass
+            else:
+                fields["simulated_lag_minutes"] = max(
+                    (current - latest).total_seconds() / 60.0, 0.0
+                )
+        stored_at = progress.get("latest_event_stored_at")
+        if isinstance(stored_at, str):
+            try:
+                stored = datetime.fromisoformat(stored_at)
+            except ValueError:
+                pass
+            else:
+                fields["ingestion_wall_lag_seconds"] = max(
+                    (datetime.now(stored.tzinfo) - stored).total_seconds(), 0.0
+                )
+    return fields
 
 
 async def _process_incidents(simulator, store, audit, state, *, final=False) -> None:

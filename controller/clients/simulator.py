@@ -6,6 +6,7 @@ import asyncio
 import math
 import random
 import tempfile
+import time
 from collections.abc import Awaitable, Callable, Iterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
@@ -21,6 +22,7 @@ from controller.errors import (
     SimulatorError,
     SimulatorHTTPError,
 )
+from controller.telemetry import RuntimeTelemetry
 
 Sleep = Callable[[float], Awaitable[None]]
 RandomValue = Callable[[], float]
@@ -36,11 +38,13 @@ class SimulatorClient:
         transport: httpx.AsyncBaseTransport | None = None,
         sleep: Sleep = asyncio.sleep,
         random_value: RandomValue = random.random,
+        telemetry: RuntimeTelemetry | None = None,
     ) -> None:
         self._settings = settings
         self._transport = transport
         self._sleep = sleep
         self._random_value = random_value
+        self._telemetry = telemetry
         self._client: httpx.AsyncClient | None = None
 
     @property
@@ -60,11 +64,13 @@ class SimulatorClient:
             max_connections=self._settings.max_connections,
             max_keepalive_connections=self._settings.max_keepalive_connections,
         )
+        transport = self._transport or httpx.AsyncHTTPTransport()
+        measured_transport = _MeasuredTransport(transport, self._telemetry)
         self._client = httpx.AsyncClient(
             base_url=self._settings.simulator_url,
             timeout=timeout,
             limits=limits,
-            transport=self._transport,
+            transport=measured_transport,
             follow_redirects=False,
             headers={"Accept": "application/json"},
         )
@@ -450,6 +456,41 @@ class SimulatorClient:
                 retry_at = retry_at.replace(tzinfo=UTC)
             seconds = (retry_at - datetime.now(UTC)).total_seconds()
         return min(max(seconds, 0.0), self._settings.retry_max_backoff_seconds)
+
+
+class _MeasuredTransport(httpx.AsyncBaseTransport):
+    """Measure bounded route/status and response-header latency per HTTP attempt."""
+
+    def __init__(
+        self, transport: httpx.AsyncBaseTransport, telemetry: RuntimeTelemetry | None
+    ) -> None:
+        self._transport = transport
+        self._telemetry = telemetry
+
+    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        started = time.perf_counter()
+        try:
+            response = await self._transport.handle_async_request(request)
+        except BaseException:
+            if self._telemetry is not None:
+                self._telemetry.observe_api(
+                    request.method,
+                    request.url.path,
+                    None,
+                    time.perf_counter() - started,
+                )
+            raise
+        if self._telemetry is not None:
+            self._telemetry.observe_api(
+                request.method,
+                request.url.path,
+                response.status_code,
+                time.perf_counter() - started,
+            )
+        return response
+
+    async def aclose(self) -> None:
+        await self._transport.aclose()
 
 
 def _iter_lines(stream: TextIOWrapper) -> Iterator[str]:

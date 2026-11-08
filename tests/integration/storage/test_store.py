@@ -199,6 +199,25 @@ async def test_run_record_persists_and_finishes_within_transaction(postgres_stor
 
 
 @pytest.mark.anyio
+async def test_observability_snapshot_reports_durable_counts_and_database_size(
+    postgres_store,
+):
+    await postgres_store.commit_chunk("simulator", 4, [_event(920020, chunk_number=4)])
+
+    snapshot = await postgres_store.get_observability_snapshot()
+
+    assert snapshot["database_bytes"] > 0
+    assert snapshot["event_count"] == 1
+    assert snapshot["simulator_checkpoint"] == 4
+    assert snapshot["fact_count"] == 0
+    assert snapshot["experiment_decisions"] == 0
+    heartbeat = await postgres_store.get_runtime_heartbeat()
+    assert heartbeat["committed_chunk"] == 4
+    assert heartbeat["latest_event_id"] == 920020
+    assert heartbeat["pending_approvals"] == 0
+
+
+@pytest.mark.anyio
 async def test_committed_state_survives_store_reopen_and_migrations_repeat(
     postgres_store,
 ):

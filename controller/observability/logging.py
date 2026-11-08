@@ -16,6 +16,7 @@ _CONTEXT_FIELDS = (
     "finished",
     "workflow_count",
     "advance_minutes",
+    "metrics",
 )
 
 

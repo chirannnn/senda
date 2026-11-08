@@ -987,6 +987,171 @@ class DatabaseStore:
                 )
             )
 
+    async def get_observability_snapshot(self) -> dict[str, object]:
+        """Read terminal run metrics from persisted controller and event state."""
+        self._ensure_open()
+        async with self._sessions() as session:
+            database_bytes = await session.scalar(
+                text("SELECT pg_database_size(current_database())")
+            )
+            event_count = await session.scalar(
+                select(func.count()).select_from(SimulatorEvent)
+            )
+            checkpoint = await session.scalar(
+                select(ProcessingCheckpoint.chunk_number).where(
+                    ProcessingCheckpoint.checkpoint_key == "simulator"
+                )
+            )
+            analytics_cursor = await session.scalar(
+                select(AnalyticsCheckpoint.event_id).where(
+                    AnalyticsCheckpoint.processor == "kpi-facts-v1"
+                )
+            )
+            fact_row = (
+                await session.execute(
+                    select(
+                        func.count(),
+                        func.count().filter(KpiFact.quality == "valid"),
+                        func.count().filter(KpiFact.quality == "invalid"),
+                        func.count().filter(KpiFact.quality == "incomplete"),
+                        func.count().filter(KpiFact.quality == "unsupported"),
+                        func.coalesce(
+                            func.sum(KpiFact.dials).filter(KpiFact.quality == "valid"),
+                            0,
+                        ),
+                        func.coalesce(
+                            func.sum(KpiFact.connected).filter(
+                                KpiFact.quality == "valid"
+                            ),
+                            0,
+                        ),
+                        func.coalesce(
+                            func.sum(KpiFact.concluded).filter(
+                                KpiFact.quality == "valid"
+                            ),
+                            0,
+                        ),
+                        func.coalesce(
+                            func.sum(KpiFact.uploaded).filter(
+                                KpiFact.quality == "valid"
+                            ),
+                            0,
+                        ),
+                        func.max(KpiFact.occurred_at),
+                    )
+                )
+            ).one()
+            decisions = await session.scalar(
+                select(func.count()).select_from(ExperimentDecision)
+            )
+            outbox = await session.execute(
+                select(OutboxOperation.status, func.count()).group_by(
+                    OutboxOperation.status
+                )
+            )
+            proposals = await session.execute(
+                select(GovernanceProposal.status, func.count()).group_by(
+                    GovernanceProposal.status
+                )
+            )
+            incidents = await session.execute(
+                select(IncidentRecord.status, func.count()).group_by(
+                    IncidentRecord.status
+                )
+            )
+            latest_event_stored_at = await session.scalar(
+                select(func.max(SimulatorEvent.stored_at))
+            )
+            return {
+                "database_bytes": int(database_bytes or 0),
+                "event_count": int(event_count or 0),
+                "simulator_checkpoint": checkpoint,
+                "analytics_cursor": int(analytics_cursor or 0),
+                "fact_count": int(fact_row[0]),
+                "valid_facts": int(fact_row[1]),
+                "invalid_facts": int(fact_row[2]),
+                "incomplete_facts": int(fact_row[3]),
+                "unsupported_facts": int(fact_row[4]),
+                "dials": int(fact_row[5]),
+                "connected": int(fact_row[6]),
+                "concluded": int(fact_row[7]),
+                "uploaded": int(fact_row[8]),
+                "latest_fact_at": (
+                    fact_row[9].isoformat() if fact_row[9] is not None else None
+                ),
+                "latest_event_stored_at": (
+                    latest_event_stored_at.isoformat()
+                    if latest_event_stored_at is not None
+                    else None
+                ),
+                "experiment_decisions": int(decisions or 0),
+                "outbox_statuses": {status: int(count) for status, count in outbox},
+                "proposal_statuses": {
+                    status: int(count) for status, count in proposals
+                },
+                "incident_statuses": {
+                    status: int(count) for status, count in incidents
+                },
+            }
+
+    async def count_pending_approvals(self) -> int:
+        """Count proposals whose approval decision is not yet terminal."""
+        self._ensure_open()
+        async with self._sessions() as session:
+            count = await session.scalar(
+                select(func.count()).where(
+                    GovernanceProposal.status.in_(("submitted", "pending"))
+                )
+            )
+        return int(count or 0)
+
+    async def get_runtime_heartbeat(self) -> dict[str, object]:
+        """Read small indexed progress fields for per-advance operational logs."""
+        self._ensure_open()
+        latest_event = (
+            select(SimulatorEvent.event_id)
+            .order_by(SimulatorEvent.event_id.desc())
+            .limit(1)
+            .scalar_subquery()
+        )
+        latest_stored = (
+            select(SimulatorEvent.stored_at)
+            .order_by(SimulatorEvent.event_id.desc())
+            .limit(1)
+            .scalar_subquery()
+        )
+        latest_fact = (
+            select(KpiFact.occurred_at)
+            .order_by(KpiFact.source_event_id.desc())
+            .limit(1)
+            .scalar_subquery()
+        )
+        checkpoint = (
+            select(ProcessingCheckpoint.chunk_number)
+            .where(ProcessingCheckpoint.checkpoint_key == "simulator")
+            .scalar_subquery()
+        )
+        pending = (
+            select(func.count())
+            .where(GovernanceProposal.status.in_(("submitted", "pending")))
+            .scalar_subquery()
+        )
+        async with self._sessions() as session:
+            row = (
+                await session.execute(
+                    select(
+                        checkpoint, latest_event, latest_stored, latest_fact, pending
+                    )
+                )
+            ).one()
+        return {
+            "committed_chunk": row[0],
+            "latest_event_id": row[1],
+            "latest_event_stored_at": row[2].isoformat() if row[2] else None,
+            "latest_fact_at": row[3].isoformat() if row[3] else None,
+            "pending_approvals": int(row[4] or 0),
+        }
+
     async def commit_chunk(
         self,
         checkpoint_key: str,

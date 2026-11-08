@@ -100,6 +100,23 @@ The runtime persists simulator events and advance intents, then derives durable 
 reconciliation and each committed advance. It does not schedule experiments or automatically invoke governance;
 those remain explicit callable components.
 
+### Runtime telemetry (Chunk 9)
+
+The controller writes a structured `advance_ingested` heartbeat after each durable live advance and a final
+`runtime_metrics` JSON record when it completes or stops. Heartbeats include simulator time/state, committed
+chunk and latest event IDs, pending chunks and approvals, credits when the API provides them, ingestion lag,
+and cumulative API request/error counts. The final record includes event/fact throughput, bounded API latency
+histograms and status counts, peak process RSS, PostgreSQL database bytes, checkpoints/outbox/proposal states,
+decision rate, and separate pickup, engagement, and business-outcome rates. Undefined KPI denominators remain
+`null`. API latency measures time to response headers; chunk ingestion duration includes response download,
+validation and persistence.
+
+The runtime is a CLI process and does not expose a metrics or health server. It emits no credentials or
+unbounded request labels. There are no universal alert thresholds; operators should alert on failed/ambiguous
+operations, stale ingestion, nonterminal outbox/proposal state, and resource limits using deployment budgets.
+Use `python scripts/measure_load.py <SIM_URL> --output reports/public_03_load.md` for the reproducible public
+load run; it samples controller RSS and PostgreSQL database size while retaining the controller JSON log.
+
 ### Durable storage (Chunk 2)
 
 The async store in `controller/storage/` uses `CONTROLLER_DATABASE_URL` in SQLAlchemy's

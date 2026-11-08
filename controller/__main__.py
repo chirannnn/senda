@@ -17,6 +17,7 @@ from controller.errors import ControllerError
 from controller.observability import configure_logging
 from controller.runtime import run_controller
 from controller.storage.store import DatabaseStore
+from controller.telemetry import RuntimeTelemetry
 
 logger = logging.getLogger(__name__)
 
@@ -52,8 +53,11 @@ async def _run(settings: Settings) -> int:
         # Alembic's fileConfig configures the root logger; reapply the
         # controller's structured format before runtime/network operations.
         configure_logging(settings.log_level)
-        async with SimulatorClient(settings) as simulator:
-            outcome = await run_controller(settings, simulator, stop_event, store)
+        telemetry = RuntimeTelemetry()
+        async with SimulatorClient(settings, telemetry=telemetry) as simulator:
+            outcome = await run_controller(
+                settings, simulator, stop_event, store, telemetry
+            )
     finally:
         await store.close()
         for signum, handler in previous_handlers.items():

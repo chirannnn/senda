@@ -1,9 +1,12 @@
+import asyncio
+
 import httpx
 import pytest
 
 from controller.clients.simulator import SimulatorClient
 from controller.config import Settings
 from controller.errors import AmbiguousPostError, SimulatorError, SimulatorHTTPError
+from controller.telemetry import RuntimeTelemetry
 
 
 @pytest.fixture
@@ -41,6 +44,34 @@ async def test_client_lifecycle_and_documented_get_endpoints():
         ("GET", "/sim/state"),
         ("GET", "/workflows"),
     ]
+
+
+@pytest.mark.anyio
+async def test_client_records_each_api_attempt_without_exposing_resource_ids():
+    telemetry = RuntimeTelemetry()
+    attempts = 0
+
+    def handler(request):
+        nonlocal attempts
+        attempts += 1
+        return httpx.Response(503 if attempts == 1 else 200, json={"ok": True})
+
+    client = SimulatorClient(
+        _settings(),
+        transport=httpx.MockTransport(handler),
+        sleep=lambda _: asyncio.sleep(0),
+        telemetry=telemetry,
+    )
+    async with client:
+        assert await client.get_health() == {"ok": True}
+
+    payload = telemetry.export()
+    assert payload["api"]["GET /health"]["requests"] == 2
+    assert payload["api"]["GET /health"]["failures"] == 1
+    assert payload["api"]["GET /health"]["status_codes"] == {
+        "200": 1,
+        "503": 1,
+    }
 
 
 @pytest.mark.anyio

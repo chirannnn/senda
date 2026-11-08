@@ -4,7 +4,7 @@
 
 **Current phase:** Chunk 9 load and observability in progress
 **Current chunk:** 9 - Load and observability (in progress)
-**Current next action:** Chunk 9 subtask 2 - runtime, HTTP, and storage instrumentation.
+**Current next action:** Chunk 9 subtask 3 - reproducible load runner and operations guidance.
 
 ## Implementation progress
 
@@ -319,4 +319,5 @@ Known limits: these are synthetic development-host measurements, not `public_03_
 
 | Subtask | Status | Validation | Commit |
 |---|---|---|---|
-| 1. Telemetry primitives | COMPLETE | 10 unit tests passed; Ruff check/format, compileall, and diff check passed | this subtask commit |
+| 1. Telemetry primitives | COMPLETE | 10 unit tests passed; Ruff check/format, compileall, and diff check passed | `a1dab4d` |
+| 2. Runtime, HTTP, and storage instrumentation | COMPLETE | 66 focused unit/PostgreSQL tests passed; Ruff check/format, compileall, and diff check passed | this subtask commit |

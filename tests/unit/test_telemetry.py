@@ -8,17 +8,41 @@ def test_counters_histograms_and_derived_rates_are_reproducible():
     telemetry.increment("events_inserted", 30)
     telemetry.observe("work_seconds", 0.02)
     telemetry.set_database_snapshot({"experiment_decisions": 2})
+    telemetry.record_decision()
+    telemetry.record_decision()
     telemetry.record_initial_credits({"credits_remaining": 9})
     telemetry.record_state({"credits_remaining": 7, "sim_minute": 60})
 
     result = telemetry.export()
 
-    assert result["counters"] == {"events_inserted": 30}
+    assert result["counters"] == {
+        "decisions_persisted": 2,
+        "events_inserted": 30,
+    }
     assert result["histograms"]["work_seconds"]["count"] == 1
     assert result["histograms"]["work_seconds"]["max_seconds"] == 0.02
     assert result["decisions_per_hour"] >= 2
     assert result["credits_spent"] == 2
     assert result["latest"]["simulated_minute"] == 60
+
+
+def test_outcome_metrics_keep_kpis_separate_and_zero_denominators_undefined():
+    telemetry = RuntimeTelemetry()
+    telemetry.set_database_snapshot(
+        {"dials": 10, "connected": 4, "concluded": 2, "uploaded": 8}
+    )
+    assert telemetry.export()["outcomes"] == {
+        "pickup_rate": 0.4,
+        "engagement_rate": 0.5,
+        "business_outcome_rate": 0.25,
+    }
+
+    telemetry.set_database_snapshot({"dials": 0, "connected": 0, "concluded": 0})
+    assert telemetry.export()["outcomes"] == {
+        "pickup_rate": None,
+        "engagement_rate": None,
+        "business_outcome_rate": None,
+    }
 
 
 def test_api_metrics_use_bounded_routes_and_count_failures():

@@ -13,6 +13,7 @@ from controller.storage.store import (
     ExperimentDecisionConflictError,
     KpiFactRecord,
 )
+from controller.telemetry import RuntimeTelemetry
 
 
 def _experiment_plan(**changes):
@@ -120,13 +121,15 @@ async def test_insufficient_decision_and_audit_replay_without_bootstrap(postgres
         experiment_id="experiment-insufficient",
         cutoff_event_id=0,
     )
-    evaluator = ExperimentEvaluator(postgres_store)
+    telemetry = RuntimeTelemetry()
+    evaluator = ExperimentEvaluator(postgres_store, telemetry=telemetry)
     first = await evaluator.evaluate_and_persist(plan)
     replay = await evaluator.evaluate_and_persist(plan)
     assert first == replay
     assert first.winner is None
     assert first.variants[0].primary is None
     assert first.decision.value == "insufficient_evidence"
+    assert telemetry.export()["counters"]["decisions_persisted"] == 1
     records = await AuditLog(postgres_store).list_for_workflow("wf")
     assert [record.action for record in records] == ["experiment_decided"]
 

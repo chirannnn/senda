@@ -7,16 +7,15 @@ import sys
 import time
 from collections import Counter
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from typing import Any
 
 _LATENCY_BUCKETS = (0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0)
-_ROUTES = (
-    ("/workflows/{workflow_id}/config/history", "/workflows/"),
-    ("/workflows/{workflow_id}/config", "/workflows/"),
-    ("/workflows/{workflow_id}/apply", "/workflows/"),
-    ("/approvals/{approval_id}", "/approvals/"),
-    ("/events/chunks/{chunk_number}", "/events/chunks/"),
-)
+_WORKFLOW_ROUTES = {
+    "config/history": "/workflows/{workflow_id}/config/history",
+    "config": "/workflows/{workflow_id}/config",
+    "apply": "/workflows/{workflow_id}/apply",
+}
 
 
 @dataclass(slots=True)
@@ -39,13 +38,18 @@ class _Histogram:
             self.overflow += 1
 
     def export(self) -> dict[str, Any]:
+        cumulative = []
+        running = 0
+        for count in self.buckets:
+            running += count
+            cumulative.append(running)
         return {
             "count": self.count,
             "sum_seconds": self.total,
             "max_seconds": self.maximum,
             "le_seconds": list(_LATENCY_BUCKETS),
-            "buckets": self.buckets,
-            "+Inf": self.overflow + sum(self.buckets),
+            "buckets_le": cumulative,
+            "+Inf": self.count,
         }
 
 
@@ -78,18 +82,30 @@ class RuntimeTelemetry:
         key = f"{method.upper()} {route}"
         item = self._api.setdefault(
             key,
-            {"requests": 0, "failures": 0, "status_codes": Counter()},
+            {
+                "requests": 0,
+                "failures": 0,
+                "retryable_responses": 0,
+                "status_codes": Counter(),
+            },
         )
         item["requests"] += 1
-        if status_code is None or status_code >= 500 or status_code == 429:
+        if status_code is None or status_code >= 400:
             item["failures"] += 1
         if status_code is not None:
             item["status_codes"][str(status_code)] += 1
+            if status_code in {408, 429} or status_code >= 500:
+                item["retryable_responses"] += 1
         self.observe("simulator_api_request_seconds", seconds)
 
     def record_ingestion(
         self, *, chunk: int, observed_events: int, inserted_events: int, seconds: float
     ) -> None:
+        values = (chunk, observed_events, inserted_events)
+        if any(
+            isinstance(value, bool) or not isinstance(value, int) for value in values
+        ):
+            raise ValueError("ingestion values must be integers")
         if min(chunk, observed_events, inserted_events) < 0:
             raise ValueError("ingestion values cannot be negative")
         if inserted_events > observed_events:
@@ -109,6 +125,7 @@ class RuntimeTelemetry:
     def record_state(self, state: dict[str, Any]) -> None:
         for source, target in (
             ("sim_minute", "simulated_minute"),
+            ("ts", "simulator_timestamp"),
             ("chunks", "simulator_chunks"),
             ("last_event_id", "simulator_last_event_id"),
             ("finished", "finished"),
@@ -131,6 +148,10 @@ class RuntimeTelemetry:
         self.increment("facts_inserted", inserted)
         self.observe("fact_processing_seconds", seconds)
 
+    def record_decision(self) -> None:
+        """Count a decision successfully persisted by an instrumented evaluator."""
+        self.increment("decisions_persisted")
+
     def set_database_snapshot(self, snapshot: dict[str, Any]) -> None:
         self._latest["database"] = snapshot
 
@@ -139,21 +160,50 @@ class RuntimeTelemetry:
         initial = self._latest.get("credits_initial")
         remaining = self._latest.get("credits_remaining")
         database = self._latest.get("database", {})
-        decisions = database.get("experiment_decisions", 0)
+        decisions = self._counters["decisions_persisted"]
+        outcomes = {
+            "pickup_rate": _ratio(database.get("connected"), database.get("dials")),
+            "engagement_rate": _ratio(
+                database.get("concluded"), database.get("connected")
+            ),
+            "business_outcome_rate": _ratio(
+                database.get("concluded"), database.get("uploaded")
+            ),
+        }
+        simulated_lag_minutes = _simulated_lag_minutes(
+            self._latest.get("simulator_timestamp"), database.get("latest_fact_at")
+        )
+        stored_at = database.get("latest_event_stored_at")
+        wall_lag = None
+        if isinstance(stored_at, str):
+            try:
+                stored_time = datetime.fromisoformat(stored_at)
+                wall_lag = max((datetime.now(UTC) - stored_time).total_seconds(), 0.0)
+            except ValueError:
+                pass
         return {
             "elapsed_seconds": elapsed,
             "events_per_second": self._counters["events_inserted"] / elapsed,
             "decisions_per_hour": decisions * 3600 / elapsed,
+            "persisted_decisions_total": database.get("experiment_decisions", 0),
             "credits_spent": (
                 max(initial - remaining, 0)
                 if isinstance(initial, int) and isinstance(remaining, int)
                 else None
+            ),
+            "outcomes": outcomes,
+            "simulated_lag_minutes": simulated_lag_minutes,
+            "ingestion_wall_lag_seconds": wall_lag,
+            "pending_approvals": sum(
+                database.get("proposal_statuses", {}).get(status, 0)
+                for status in ("submitted", "pending")
             ),
             "counters": dict(sorted(self._counters.items())),
             "api": {
                 key: {
                     "requests": value["requests"],
                     "failures": value["failures"],
+                    "retryable_responses": value["retryable_responses"],
                     "status_codes": dict(sorted(value["status_codes"].items())),
                 }
                 for key, value in sorted(self._api.items())
@@ -162,20 +212,45 @@ class RuntimeTelemetry:
                 key: value.export() for key, value in sorted(self._histograms.items())
             },
             "latest": dict(self._latest),
-            "process_memory_bytes": process_memory_bytes(),
+            "process_peak_rss_bytes": process_memory_bytes(),
         }
 
 
 def _route(path: str) -> str:
     if not path.startswith("/"):
         return "/other"
-    for template, prefix in _ROUTES:
-        suffix = template.rsplit("/", 1)[-1]
-        if path.startswith(prefix) and (
-            path.endswith(suffix) or suffix.startswith("{")
-        ):
-            return template
+    parts = path.split("/")
+    if len(parts) >= 3 and parts[1] == "workflows":
+        suffix = "/".join(parts[3:])
+        return _WORKFLOW_ROUTES.get(suffix, "/workflows/{workflow_id}/other")
+    if path.startswith("/approvals/"):
+        return "/approvals/{approval_id}"
+    if path.startswith("/events/chunks/"):
+        return "/events/chunks/{chunk_number}"
     return path.split("?", 1)[0]
+
+
+def _ratio(numerator: object, denominator: object) -> float | None:
+    if (
+        isinstance(numerator, bool)
+        or not isinstance(numerator, int)
+        or isinstance(denominator, bool)
+        or not isinstance(denominator, int)
+        or denominator <= 0
+    ):
+        return None
+    return numerator / denominator
+
+
+def _simulated_lag_minutes(current: object, latest_fact: object) -> float | None:
+    if not isinstance(current, str) or not isinstance(latest_fact, str):
+        return None
+    try:
+        current_time = datetime.fromisoformat(current)
+        latest_time = datetime.fromisoformat(latest_fact)
+    except ValueError:
+        return None
+    return max((current_time - latest_time).total_seconds() / 60.0, 0.0)
 
 
 def process_memory_bytes() -> int | None:

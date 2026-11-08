@@ -38,6 +38,7 @@ from controller.storage.store import (
     DatabaseStore,
     ExperimentDecisionConflictError,
 )
+from controller.telemetry import RuntimeTelemetry
 
 _DIMENSIONS = {"welcome_message", "voice"}
 _PRIMARY_NAMES = {"pickup_rate": Kpi.PICKUP, "engagement_rate": Kpi.ENGAGEMENT}
@@ -267,12 +268,14 @@ class ExperimentEvaluator:
         *,
         page_size: int = 1000,
         audit: AuditLog | None = None,
+        telemetry: RuntimeTelemetry | None = None,
     ) -> None:
         if page_size < 1:
             raise ValueError("page size must be positive")
         self._store = store
         self._page_size = page_size
         self._audit = audit or AuditLog(store)
+        self._telemetry = telemetry
 
     async def evaluate(self, plan: ExperimentPlan) -> ExperimentResult:
         """Persist and return the one terminal comparison for this config family."""
@@ -586,6 +589,8 @@ class ExperimentEvaluator:
                         },
                     ),
                 )
+        if inserted and self._telemetry is not None:
+            self._telemetry.record_decision()
         return result
 
 

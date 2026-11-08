@@ -22,6 +22,7 @@ from controller.ingestion.runner import (
 from controller.ingestion.service import EventIngestionService
 from controller.runtime.lifecycle import run_controller
 from controller.storage.store import DatabaseStore
+from controller.telemetry import RuntimeTelemetry
 
 
 def _descriptor(chunk, kind, first, last):
@@ -70,18 +71,27 @@ async def test_history_and_live_chunks_persist_with_global_order_and_id_gaps(
             200, content=contents[int(request.url.path.rsplit("/", 1)[1])]
         )
 
+    telemetry = RuntimeTelemetry()
     client = SimulatorClient(
-        Settings("http://simulator.test"), transport=httpx.MockTransport(handler)
+        Settings("http://simulator.test"),
+        transport=httpx.MockTransport(handler),
+        telemetry=telemetry,
     )
     async with client:
         committed, inserted = await EventIngestionService(
-            client
+            client, telemetry=telemetry
         ).ingest_available_chunks(postgres_store, batch_size=1)
 
     assert (committed, inserted) == (2, 4)
     assert await postgres_store.get_checkpoint("simulator") == 3
     for event_id in (1, 4, 9, 12):
         assert await postgres_store.get_event(event_id) is not None
+    metrics = telemetry.export()
+    assert metrics["counters"]["chunks_committed"] == 2
+    assert metrics["counters"]["events_observed"] == 4
+    assert metrics["counters"]["events_inserted"] == 4
+    assert metrics["latest"]["pending_chunks"] == 0
+    assert metrics["api"]["GET /events/chunks/{chunk_number}"]["requests"] == 2
 
 
 @pytest.mark.anyio

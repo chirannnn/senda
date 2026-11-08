@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from collections.abc import AsyncIterator
 
 from controller.clients.simulator import SimulatorClient
@@ -12,13 +13,19 @@ from controller.ingestion.events import (
 )
 from controller.ingestion.parser import iter_ndjson, parse_descriptors
 from controller.storage.store import DatabaseStore, EventRecord
+from controller.telemetry import RuntimeTelemetry
 
 
 class EventIngestionService:
     """Read and validate API-published chunks; persistence is added separately."""
 
-    def __init__(self, simulator: SimulatorClient) -> None:
+    def __init__(
+        self,
+        simulator: SimulatorClient,
+        telemetry: RuntimeTelemetry | None = None,
+    ) -> None:
         self._simulator = simulator
+        self._telemetry = telemetry
 
     async def list_history_chunks(self, *, after: int = -1) -> list[ChunkDescriptor]:
         """Return ordered history descriptors after the supplied global cursor."""
@@ -57,6 +64,7 @@ class EventIngestionService:
         if checkpoint is not None and descriptor.chunk < checkpoint:
             return 0
 
+        started = time.perf_counter()
         # stream_chunk_lines fully downloads to its 1 MiB memory / temp-file
         # spool before yielding, so the SQL transaction never spans HTTP I/O.
         async with self._simulator.stream_chunk_lines(descriptor.chunk) as lines:
@@ -74,12 +82,20 @@ class EventIngestionService:
                 for event in records():
                     yield event
 
-            return await store.commit_chunk_stream(
+            inserted = await store.commit_chunk_stream(
                 checkpoint_key,
                 descriptor.chunk,
                 async_records(),
                 batch_size=batch_size,
             )
+            if self._telemetry is not None:
+                self._telemetry.record_ingestion(
+                    chunk=descriptor.chunk,
+                    observed_events=descriptor.events,
+                    inserted_events=inserted,
+                    seconds=time.perf_counter() - started,
+                )
+            return inserted
 
     async def list_available_chunks(self, *, after: int = -1) -> list[ChunkDescriptor]:
         """Merge history/live lists into one validated global descriptor order."""
@@ -102,6 +118,8 @@ class EventIngestionService:
         descriptors = parse_descriptors(
             [item.metadata for item in descriptors], after=after
         )
+        if self._telemetry is not None:
+            self._telemetry.set_pending_chunks(len(descriptors))
         event_count = 0
         committed_chunks = 0
         previous_last_event_id = await store.get_latest_event_id()
@@ -121,6 +139,8 @@ class EventIngestionService:
                 batch_size=batch_size,
             )
             committed_chunks += 1
+            if self._telemetry is not None:
+                self._telemetry.set_pending_chunks(len(descriptors) - committed_chunks)
         return committed_chunks, event_count
 
     async def ingest_available_chunks(
