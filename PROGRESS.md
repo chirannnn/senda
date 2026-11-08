@@ -2,9 +2,9 @@
 
 ## Overall status: COMPLETE THROUGH CHUNK 8
 
-**Current phase:** Chunk 8 crash recovery demonstration complete
-**Current chunk:** 8 - Crash recovery demonstration (complete)
-**Current next action:** Chunk 9 - Load and observability (NOT STARTED).
+**Current phase:** Chunk 9 load and observability in progress
+**Current chunk:** 9 - Load and observability (in progress)
+**Current next action:** Chunk 9 subtask 2 - runtime, HTTP, and storage instrumentation.
 
 ## Implementation progress
 
@@ -18,7 +18,7 @@
 | 6 | Statistical comparison | COMPLETE | `7a3d228`, `eef6137`, `ecb6d92`, `dba33bf`, `faca570` |
 | 7 | Public incident workflow | COMPLETE | `3d28f68`, `7a4dadf`, `88f71bc`, `aa59820`, `ade9e79`, `4a0f257` |
 | 8 | Crash recovery demonstration | COMPLETE | `7222007`, `b2ef987`, `3b3a521`, `9f6f61b`, `82ed4c7`, `6e11334` |
-| 9 | Load and observability | NOT STARTED | planned |
+| 9 | Load and observability | IN PROGRESS | see Chunk 9 subtask progress below |
 | 10 | Submission and final grading | NOT STARTED | planned |
 
 ## Chunk 6 subtask progress
@@ -314,3 +314,9 @@ Known limits: these are synthetic development-host measurements, not `public_03_
 - Partial-ingestion recovery rolled back the in-flight chunk to zero local rows/no checkpoint, then restarted and committed the complete chunk once. Pending approval recovery matched the already-created remote approval by proposal ID; approval submission/apply outboxes each ended `succeeded` with exactly one attempt; only one controller-approved config version 3 and one apply-prepared audit record exist.
 - Full isolated PostgreSQL suite: 260 passed. Ruff check/format, compileall, Alembic check and diff check passed. See `reports/crash_recovery.md` for commands, kill PIDs, remote approval observation, before/after counts and limitations.
 - Chunk 9 remains NOT STARTED; nothing was pushed.
+
+## Chunk 9 subtask progress
+
+| Subtask | Status | Validation | Commit |
+|---|---|---|---|
+| 1. Telemetry primitives | COMPLETE | 10 unit tests passed; Ruff check/format, compileall, and diff check passed | this subtask commit |
