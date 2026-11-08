@@ -384,3 +384,17 @@ not establish a large-batch improvement. Keep batch defaults at 1,000 fact
 rows and 500 event rows; no bounded same-host batch comparison supports a new
 default. Keep serial cursor/checkpoint writes; there is no evidence that
 parallelism offsets its added recovery and contention risk.
+
+
+### Runtime migration compatibility follow-up
+
+The concurrent index DDL exposed that `DatabaseStore.migrate()` wrapped the
+Alembic environment in an external SQLAlchemy transaction. That prevented
+Alembic's autocommit block from running when the Controller applied revision
+0009 on startup. The store now opens a connection and lets the Alembic
+migration context own its transaction; the normal transactional migrations
+remain managed by Alembic, and the concurrent index operation can run outside
+that transaction. A PostgreSQL integration test simulates a database at
+revision 0008 with the prior index present, calls the Controller's migration
+entry point, and verifies revision 0009 plus index removal. `store.migrate()`
+was also exercised twice on the newly created isolated microbenchmark DB.

@@ -404,3 +404,6 @@ Known limits: the synthetic 30,000-event development-host measurement is not a g
 - Removed the unreferenced composite index from model metadata and added reversible Alembic revision `0009_drop_unused_event_idx` using concurrent index DDL. The retained profile database was not migrated; the migration was applied only to isolated test DB `formi_perf_opt2_20261109`, where catalog inspection confirmed the index absent.
 - Focused storage/fact/schema tests: **28 passed**; full isolated PostgreSQL suite: **304 passed**. Alembic upgrade/check, Ruff, formatting, compileall, and `git diff --check` passed.
 - This reduces new event index maintenance and index storage; no throughput improvement was measured. No other KPI index was removed because current query paths use those indexes. KPI insert rewrites, larger batches, and concurrency remain deferred for lack of comparable PostgreSQL execution evidence or because of transaction/recovery risk. No load or stress test was run; the 50-minute target is unverified.
+
+
+- Fixed Controller-startup migration compatibility for concurrent index DDL: `DatabaseStore.migrate()` now delegates transaction ownership to Alembic. A focused PostgreSQL integration test simulates the previous revision/index and verifies startup upgrades to head and removes the index; repeated startup migration is safe.

@@ -24,6 +24,37 @@ def _event(event_id, *, chunk_number=81, payload=None):
 
 
 @pytest.mark.anyio
+async def test_startup_migration_runs_concurrent_index_ddl(postgres_store):
+    store = postgres_store
+    async with store.engine.connect() as connection:
+        connection = await connection.execution_options(isolation_level="AUTOCOMMIT")
+        await connection.execute(
+            text(
+                "CREATE INDEX CONCURRENTLY IF NOT EXISTS "
+                "ix_simulator_events_kind_chunk "
+                "ON simulator_events (kind, chunk_number)"
+            )
+        )
+        await connection.execute(
+            text("UPDATE alembic_version SET version_num = '0008_incident_evidence'")
+        )
+
+    try:
+        await store.migrate()
+        async with store.engine.connect() as connection:
+            revision = await connection.scalar(
+                text("SELECT version_num FROM alembic_version")
+            )
+            index_name = await connection.scalar(
+                text("SELECT to_regclass('ix_simulator_events_kind_chunk')")
+            )
+        assert revision == "0009_drop_unused_event_idx"
+        assert index_name is None
+    finally:
+        await store.migrate()
+
+
+@pytest.mark.anyio
 async def test_insert_read_and_duplicate_event_is_idempotent(postgres_store):
     store = postgres_store
     event = _event(920001)

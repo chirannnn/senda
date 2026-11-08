@@ -176,7 +176,7 @@ class DatabaseStore:
         self._ensure_open()
         alembic_ini = Path(__file__).resolve().parents[2] / "alembic.ini"
         config = Config(str(alembic_ini))
-        async with self._engine.begin() as connection:
+        async with self._engine.connect() as connection:
             await connection.run_sync(self._run_upgrade, config)
 
     @staticmethod
