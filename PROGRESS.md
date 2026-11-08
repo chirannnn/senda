@@ -1,10 +1,10 @@
 # Progress Tracking â€” Outcome-First Agent Loop
 
-## Overall status: COMPLETE THROUGH CHUNK 7
+## Overall status: COMPLETE THROUGH CHUNK 8
 
-**Current phase:** Chunk 7 public incident workflow complete
-**Current chunk:** 7 ? Public incident workflow (complete)
-**Current next action:** Chunk 8 crash recovery demonstration; not started in this change.
+**Current phase:** Chunk 8 crash recovery demonstration complete
+**Current chunk:** 8 ? Crash recovery demonstration (complete)
+**Current next action:** Chunk 9 load and observability; not started in this change.
 
 ## Implementation progress
 
@@ -265,7 +265,7 @@ Known limits: these are synthetic development-host measurements, not `public_03_
 
 - Inspected chunk stream ingestion and PostgreSQL transaction/checkpoint code, advance outbox reconciliation, approval submission and apply reconciliation, incident phase persistence, and their integration tests.
 - `docs/CRASH_RECOVERY.md` records code-verified crash windows, invariants, and the planned hard-kill procedure. Chunk stream rows plus checkpoint commit atomically; stable event IDs make committed replay idempotent. Advance, approval, and apply remote effects use persisted intent and documented read-side reconciliation; unresolved ambiguity halts for manual review because remote exactly-once semantics are not documented.
-- No implementation changes or real process kill have been made yet.
+- The audit found no missing behavior requiring a production-code change; the remaining work was to add crash evidence and reproducible recovery tests.
 
 
 ### Chunk 8 subtask 2 ? partial chunk ingestion
@@ -293,5 +293,13 @@ Known limits: these are synthetic development-host measurements, not `public_03_
 
 - Added the exact PowerShell/Git Bash/PostgreSQL trigger procedure to `docs/CRASH_RECOVERY.md`. Two actual Controller CLI process trees were hard-terminated while the actual simulator and isolated PostgreSQL databases remained running.
 - Ingestion kill: observed event-1 insert sleeping inside the `commit_chunk_stream` transaction; immediately before kill raw event count was 0 and checkpoint was absent. After killing the Controller and PostgreSQL sleeping session, both remained 0/absent. Restart on the same public_02 simulator and database stored 187,274 unique history events at chunk checkpoint 0 and continued ingesting. This first run later finished at simulator minute 14,400 with 324,308 unique events, checkpoint 490, and no duplicate IDs.
-- Approval kill: after observing public `GET /approvals` return `apr_00001` pending, local row was `submitted` with no stored approval ID; its submission outbox was `in_progress`, attempts 1. Hard kill left 234,187 committed events/checkpoint 160 intact. Restart against the same DB/world matched the remote approval by proposal ID, reconciled it, and applied it through Chunk 5. Persisted proposal is applied; submission and apply outboxes each succeeded with attempts 1; audit has one apply-prepared and one apply-reconciled record; remote history has exactly one controller-approved version 3. This second scenario is still advancing to its normal terminal minute for the acceptance report.
+- Approval kill: after observing public `GET /approvals` return `apr_00001` pending, local row was `submitted` with no stored approval ID; its submission outbox was `in_progress`, attempts 1. Hard kill left 234,187 committed events/checkpoint 160 intact. Restart against the same DB/world matched the remote approval by proposal ID, reconciled it, and applied it through Chunk 5. Persisted proposal is applied; submission and apply outboxes each succeeded with attempts 1; audit has one apply-prepared and one apply-reconciled record; remote history has exactly one controller-approved version 3. This scenario subsequently finished at minute 14,400; final state is recorded below.
 - No simulator source, scenario YAML contents, truth, or run-directory files were inspected.
+
+
+## Chunk 8 final acceptance
+
+- Both actual `run.sh` public_02 Controller processes were hard-terminated at controlled database transaction windows and restarted against their unchanged simulator and PostgreSQL state. Both simulator runs finished at simulated minute 14,400 with 324,308 unique event IDs and chunk checkpoint 490.
+- Partial-ingestion recovery rolled back the in-flight chunk to zero local rows/no checkpoint, then restarted and committed the complete chunk once. Pending approval recovery matched the already-created remote approval by proposal ID; approval submission/apply outboxes each ended `succeeded` with exactly one attempt; only one controller-approved config version 3 and one apply-prepared audit record exist.
+- Full isolated PostgreSQL suite: 260 passed. Ruff check/format, compileall, Alembic check and diff check passed. See `reports/crash_recovery.md` for commands, kill PIDs, remote approval observation, before/after counts and limitations.
+- Chunk 9 remains NOT STARTED; nothing was pushed.
