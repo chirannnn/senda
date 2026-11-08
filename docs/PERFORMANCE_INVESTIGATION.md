@@ -152,6 +152,13 @@ available for a separately measured future run. Corrected stage-level evidence
 is still required to decide which internal fact stage causes the aggregate
 critical-path cost.
 
+For Python specifically, no implementation change is warranted: the old
+aggregate interval cannot show whether `derive_fact()` is a meaningful share,
+and the new projection histogram has no representative observations. Existing
+fact mapping, invalid/incomplete classifications, QA fields, and separate KPI
+calculation tests remain the correctness baseline for a future profile-led
+change.
+
 No public load, stress test, or large dataset was used for this assessment.
 
 The implementation phase's final full suite passed with 299 tests on the
