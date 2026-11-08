@@ -25,8 +25,23 @@ class IncidentSuggestionAPI(Protocol):
 
     async def suggest_fixes(self, workflow_id: str, problem: str) -> dict[str, Any]: ...
 
+    async def run_validation(
+        self, workflow_id: str, prompt_version: str, sample_size: int
+    ) -> dict[str, Any]: ...
+
 
 SUGGESTION_CREDIT_COST = 3.0
+
+
+def validation_credit_cost(sample_size: int) -> int:
+    """Return the documented ceil(n/100) validation credit cost."""
+    if (
+        isinstance(sample_size, bool)
+        or not isinstance(sample_size, int)
+        or not 50 <= sample_size <= 2000
+    ):
+        raise ValueError("validation sample size must be an integer in [50, 2000]")
+    return math.ceil(sample_size / 100)
 
 
 @dataclass(frozen=True, slots=True)
@@ -449,6 +464,311 @@ async def request_candidate_suggestions(
             "candidate_count": len(candidates),
             "credits_used_observed": used,
             "credits_remaining": float(after),
+        },
+    )
+
+
+async def validate_incident_candidate(
+    simulator: IncidentSuggestionAPI,
+    store: DatabaseStore,
+    audit: AuditLog,
+    *,
+    incident_id: str,
+    prompt_version: str,
+    sample_size: int,
+) -> dict[str, object]:
+    """Validate one stored suggestion, binding evidence to its prompt and base version."""
+    cost = validation_credit_cost(sample_size)
+    if not isinstance(prompt_version, str) or not prompt_version.strip():
+        raise ValueError("candidate prompt version is required")
+    incident = await store.get_incident(incident_id)
+    if incident is None:
+        raise ValueError(f"unknown incident {incident_id!r}")
+    versions = incident.evidence.get("suggestion", {}).get("candidates", [])
+    if not isinstance(versions, list) or not any(
+        isinstance(item, dict) and item.get("prompt_version") == prompt_version
+        for item in versions
+    ):
+        raise ValueError("candidate must exactly match a stored allowlisted suggestion")
+    validations = dict(incident.evidence.get("validations", {}))
+    previous = validations.get(prompt_version)
+    if isinstance(previous, dict):
+        if previous.get("status") == "intent":
+            validations[prompt_version] = {**previous, "status": "ambiguous"}
+            return await _incident_transition(
+                store,
+                audit,
+                incident_id,
+                status="validation_ambiguous",
+                reason="A validation request intent has no persisted response; no lookup API exists, so it was not retried",
+                evidence_update={**incident.evidence, "validations": validations},
+                entry={
+                    "event": "validation_ambiguous",
+                    "prompt_version": prompt_version,
+                    "manual_review_required": True,
+                },
+            )
+        terminal_status = {
+            "ambiguous": "validation_ambiguous",
+            "passed": "candidate_validated",
+            "rejected": "candidate_rejected",
+            "insufficient_credits": "insufficient_credits",
+            "invalid_response": "validation_invalid_response",
+            "stale_or_mismatched": "validation_failed",
+            "credit_mismatch": "validation_failed",
+            "failed": "validation_failed",
+        }.get(previous.get("status"), "unknown")
+        return {**previous, "status": terminal_status}
+    if incident.status not in {
+        "candidates_ready",
+        "candidate_validated",
+        "candidate_rejected",
+    }:
+        return {
+            "status": incident.status,
+            "reason": "incident is not eligible for validation",
+        }
+
+    current = await simulator.get_workflow_config(incident.workflow_id)
+    workflow = next(
+        (
+            item
+            for item in await simulator.list_workflows()
+            if item.get("workflow_id") == incident.workflow_id
+        ),
+        None,
+    )
+    version = current.get("version")
+    config = current.get("config")
+    governance = workflow.get("governance") if isinstance(workflow, dict) else None
+    floor = (
+        governance.get("min_validation_pass_rate")
+        if isinstance(governance, dict)
+        else None
+    )
+    options = workflow.get("options") if isinstance(workflow, dict) else None
+    prompts = options.get("prompt_version") if isinstance(options, dict) else None
+    if (
+        isinstance(version, bool)
+        or not isinstance(version, int)
+        or version != incident.trigger_config_version
+        or not isinstance(config, dict)
+        or not isinstance(config.get("prompt_version"), str)
+        or not isinstance(prompts, list)
+        or prompt_version not in prompts
+        or isinstance(floor, bool)
+        or not isinstance(floor, (int, float))
+        or not math.isfinite(floor)
+        or not 0 <= floor <= 1
+    ):
+        return await _incident_transition(
+            store,
+            audit,
+            incident_id,
+            status="stale_or_unconfigured_validation",
+            reason="Current config, candidate allowlist or configured validation floor is missing or stale",
+            entry={
+                "event": "validation_not_started",
+                "prompt_version": prompt_version,
+                "expected_config_version": incident.trigger_config_version,
+                "current_config_version": version,
+            },
+        )
+
+    state = await simulator.get_state()
+    remaining = state.get("credits_remaining")
+    if (
+        isinstance(remaining, bool)
+        or not isinstance(remaining, (int, float))
+        or not math.isfinite(remaining)
+        or remaining < 0
+    ):
+        raise ValueError("simulator state has no valid credits_remaining balance")
+    if remaining < cost:
+        validations[prompt_version] = {
+            "status": "insufficient_credits",
+            "sample_size": sample_size,
+            "documented_cost": cost,
+            "credits_before": float(remaining),
+            "credits_used_observed": 0,
+            "config_version": version,
+        }
+        return await _incident_transition(
+            store,
+            audit,
+            incident_id,
+            status="insufficient_credits",
+            reason="Available simulator credits are below the documented validation cost",
+            evidence_update={**incident.evidence, "validations": validations},
+            entry={
+                "event": "validation_insufficient_credits",
+                "prompt_version": prompt_version,
+                "available_before": float(remaining),
+                "documented_cost": cost,
+            },
+        )
+
+    validations[prompt_version] = {
+        "status": "intent",
+        "sample_size": sample_size,
+        "documented_cost": cost,
+        "credits_before": float(remaining),
+        "config_version": version,
+        "minimum_pass_rate": float(floor),
+    }
+    try:
+        await _incident_transition(
+            store,
+            audit,
+            incident_id,
+            status="validation_intent",
+            expected_status=incident.status,
+            reason="Persisted one-shot validation intent before spending simulator credits",
+            evidence_update={**incident.evidence, "validations": validations},
+            entry={
+                "event": "validation_intent",
+                "prompt_version": prompt_version,
+                "sample_size": sample_size,
+                "documented_cost": cost,
+                "config_version": version,
+                "available_before": float(remaining),
+            },
+        )
+    except IncidentStateConflictError:
+        latest = await store.get_incident(incident_id)
+        return {
+            "status": latest.status if latest is not None else "unknown",
+            "reason": "another request already claimed this validation phase",
+        }
+    try:
+        result = await simulator.run_validation(
+            incident.workflow_id, prompt_version, sample_size
+        )
+    except AmbiguousPostError as exc:
+        validations[prompt_version] = {
+            **validations[prompt_version],
+            "status": "ambiguous",
+            "reason": exc.reason,
+        }
+        return await _incident_transition(
+            store,
+            audit,
+            incident_id,
+            status="validation_ambiguous",
+            reason="Validation POST outcome is ambiguous and cannot be reconciled by a documented lookup API",
+            evidence_update={**incident.evidence, "validations": validations},
+            entry={
+                "event": "validation_ambiguous",
+                "prompt_version": prompt_version,
+                "reason": exc.reason,
+            },
+        )
+    except SimulatorHTTPError as exc:
+        after = await _credits_if_available(simulator)
+        outcome = "insufficient_credits" if exc.status_code == 402 else "failed"
+        validations[prompt_version] = {
+            **validations[prompt_version],
+            "status": outcome,
+            "http_status": exc.status_code,
+            "credits_after": after,
+            "credits_used_observed": (
+                float(remaining) - after if after is not None else None
+            ),
+        }
+        return await _incident_transition(
+            store,
+            audit,
+            incident_id,
+            status="insufficient_credits"
+            if exc.status_code == 402
+            else "validation_failed",
+            reason=f"Validation endpoint returned HTTP {exc.status_code}; no retry was attempted",
+            evidence_update={**incident.evidence, "validations": validations},
+            entry={
+                "event": "validation_http_error",
+                "prompt_version": prompt_version,
+                "http_status": exc.status_code,
+            },
+        )
+    except SimulatorError as exc:
+        after = await _credits_if_available(simulator)
+        validations[prompt_version] = {
+            **validations[prompt_version],
+            "status": "invalid_response",
+            "error_type": type(exc).__name__,
+            "credits_after": after,
+            "credits_used_observed": (
+                float(remaining) - after if after is not None else None
+            ),
+        }
+        return await _incident_transition(
+            store,
+            audit,
+            incident_id,
+            status="validation_invalid_response",
+            reason="Validation response was malformed; it was discarded and not retried",
+            evidence_update={**incident.evidence, "validations": validations},
+            entry={
+                "event": "validation_invalid_response",
+                "prompt_version": prompt_version,
+                "credits_after": after,
+            },
+        )
+
+    identity_matches = (
+        result.get("workflow_id") == incident.workflow_id
+        and result.get("prompt_version") == prompt_version
+        and result.get("n") == sample_size
+    )
+    after = result.get("credits_remaining")
+    used = float(remaining) - float(after)
+    refreshed = await simulator.get_workflow_config(incident.workflow_id)
+    if not identity_matches or refreshed.get("version") != version:
+        validation_status = "stale_or_mismatched"
+    elif not math.isclose(used, float(cost), abs_tol=1e-9):
+        validation_status = "credit_mismatch"
+    elif result["pass_rate"] < floor:
+        validation_status = "rejected"
+    else:
+        validation_status = "passed"
+    validations[prompt_version] = {
+        **validations[prompt_version],
+        "status": validation_status,
+        "validation_run_id": result["validation_run_id"],
+        "workflow_id": result["workflow_id"],
+        "prompt_version": result["prompt_version"],
+        "sample_size": result["n"],
+        "failures": result["failures"],
+        "pass_rate": result["pass_rate"],
+        "ts": result["ts"],
+        "credits_after": float(after),
+        "credits_used_observed": used,
+        "minimum_pass_rate": float(floor),
+        "config_version_after": refreshed.get("version"),
+    }
+    incident_status = {
+        "passed": "candidate_validated",
+        "rejected": "candidate_rejected",
+    }.get(validation_status, "validation_failed")
+    return await _incident_transition(
+        store,
+        audit,
+        incident_id,
+        status=incident_status,
+        reason=(
+            "Validation passed the workflow-configured safety floor and matched candidate and config"
+            if validation_status == "passed"
+            else "Validation did not establish a safe, matching candidate"
+        ),
+        evidence_update={**incident.evidence, "validations": validations},
+        entry={
+            "event": "validation_completed",
+            "prompt_version": prompt_version,
+            "validation_run_id": result["validation_run_id"],
+            "validation_status": validation_status,
+            "pass_rate": result["pass_rate"],
+            "minimum_pass_rate": float(floor),
+            "credits_used_observed": used,
         },
     )
 

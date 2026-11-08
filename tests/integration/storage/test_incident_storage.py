@@ -3,7 +3,11 @@
 import pytest
 
 from controller.errors import AmbiguousPostError, SimulatorHTTPError
-from controller.incidents import request_candidate_suggestions
+from controller.incidents import (
+    request_candidate_suggestions,
+    validate_incident_candidate,
+    validation_credit_cost,
+)
 from controller.storage.audit import AuditEntry, AuditLog, AuditQuery
 from controller.storage.store import DatabaseStore
 
@@ -89,17 +93,32 @@ async def test_incident_audit_and_state_share_one_transaction(postgres_store):
 
 class _SuggestionAPI:
     def __init__(
-        self, *, workflow_id="incident-suggestion-wf", credits=10, post_error=None
+        self,
+        *,
+        workflow_id="incident-suggestion-wf",
+        credits=10,
+        post_error=None,
+        validation_error=None,
+        validation_response=None,
+        config_version=3,
+        validation_floor=0.9,
+        bump_config_after_validation=False,
     ):
         self.workflow_id = workflow_id
         self.credits = credits
         self.post_error = post_error
+        self.validation_error = validation_error
+        self.validation_response = validation_response
+        self.config_version = config_version
+        self.validation_floor = validation_floor
+        self.bump_config_after_validation = bump_config_after_validation
         self.posts = 0
+        self.validation_posts = 0
 
     async def get_workflow_config(self, workflow_id):
         return {
             "workflow_id": workflow_id,
-            "version": 3,
+            "version": self.config_version,
             "config": {"prompt_version": "P1"},
         }
 
@@ -108,6 +127,7 @@ class _SuggestionAPI:
             {
                 "workflow_id": self.workflow_id,
                 "options": {"prompt_version": ["P1", "P2"]},
+                "governance": {"min_validation_pass_rate": self.validation_floor},
             }
         ]
 
@@ -127,6 +147,30 @@ class _SuggestionAPI:
             "credits_remaining": self.credits - 3,
         }
 
+    async def run_validation(self, workflow_id, prompt_version, sample_size):
+        self.validation_posts += 1
+        if self.validation_error:
+            raise self.validation_error
+        if self.validation_response is not None:
+            result = self.validation_response
+            if self.bump_config_after_validation:
+                self.config_version += 1
+            return result
+        failures = round(sample_size * 0.05)
+        result = {
+            "validation_run_id": "val_00001",
+            "workflow_id": workflow_id,
+            "prompt_version": prompt_version,
+            "n": sample_size,
+            "failures": failures,
+            "pass_rate": 1 - failures / sample_size,
+            "ts": "2027-01-04T01:00:00+05:30",
+            "credits_remaining": self.credits - validation_credit_cost(sample_size),
+        }
+        if self.bump_config_after_validation:
+            self.config_version += 1
+        return result
+
 
 async def _seed_eligible_incident(
     store, incident_id="incident-suggestion", workflow_id="incident-suggestion-wf"
@@ -141,6 +185,25 @@ async def _seed_eligible_incident(
             status="evidence_recorded",
             evidence={"sufficient": True, "hallucination_rate": 0.4},
             timeline=[{"event": "evidence_recorded"}],
+        )
+
+
+async def _seed_candidate_incident(store, incident_id, workflow_id):
+    async with store.transaction() as session:
+        await store.ensure_workflow(session, workflow_id)
+        await store.save_incident(
+            session,
+            incident_id=incident_id,
+            workflow_id=workflow_id,
+            trigger_config_version=3,
+            status="candidates_ready",
+            evidence={
+                "sufficient": True,
+                "suggestion": {
+                    "candidates": [{"prompt_version": "P2", "summary": "Candidate"}]
+                },
+            },
+            timeline=[{"event": "candidates_ready"}],
         )
 
 
@@ -249,3 +312,157 @@ async def test_orphaned_suggestion_intent_is_manual_review_without_post(postgres
     assert result["status"] == "suggestion_ambiguous"
     assert result["manual_review_required"]
     assert api.posts == 0
+
+
+@pytest.mark.anyio
+async def test_validation_binds_candidate_config_and_workflow_floor(postgres_store):
+    incident_id, workflow_id = "incident-validation-pass", "workflow-validation-pass"
+    await _seed_candidate_incident(postgres_store, incident_id, workflow_id)
+    api = _SuggestionAPI(workflow_id=workflow_id)
+    result = await validate_incident_candidate(
+        api,
+        postgres_store,
+        AuditLog(postgres_store),
+        incident_id=incident_id,
+        prompt_version="P2",
+        sample_size=100,
+    )
+    record = await postgres_store.get_incident(incident_id)
+    evidence = record.evidence["validations"]["P2"]
+    assert result["status"] == record.status == "candidate_validated"
+    assert evidence["validation_run_id"] == "val_00001"
+    assert evidence["config_version"] == evidence["config_version_after"] == 3
+    assert evidence["pass_rate"] >= evidence["minimum_pass_rate"]
+    assert evidence["credits_used_observed"] == 1
+    assert api.validation_posts == 1
+
+
+@pytest.mark.anyio
+async def test_validation_below_workflow_floor_is_rejected(postgres_store):
+    incident_id, workflow_id = "incident-validation-fail", "workflow-validation-fail"
+    await _seed_candidate_incident(postgres_store, incident_id, workflow_id)
+    api = _SuggestionAPI(workflow_id=workflow_id, validation_floor=0.97)
+    result = await validate_incident_candidate(
+        api,
+        postgres_store,
+        AuditLog(postgres_store),
+        incident_id=incident_id,
+        prompt_version="P2",
+        sample_size=100,
+    )
+    record = await postgres_store.get_incident(incident_id)
+    assert result["status"] == record.status == "candidate_rejected"
+    assert record.evidence["validations"]["P2"]["status"] == "rejected"
+
+
+@pytest.mark.anyio
+async def test_validation_mismatch_or_midrun_config_change_is_not_accepted(
+    postgres_store,
+):
+    mismatch_id, mismatch_wf = (
+        "incident-validation-mismatch",
+        "workflow-validation-mismatch",
+    )
+    await _seed_candidate_incident(postgres_store, mismatch_id, mismatch_wf)
+    mismatch_api = _SuggestionAPI(
+        workflow_id=mismatch_wf,
+        validation_response={
+            "validation_run_id": "val-mismatch",
+            "workflow_id": mismatch_wf,
+            "prompt_version": "P1",
+            "n": 100,
+            "failures": 5,
+            "pass_rate": 0.95,
+            "ts": "2027-01-04T01:00:00+05:30",
+            "credits_remaining": 9,
+        },
+    )
+    mismatch = await validate_incident_candidate(
+        mismatch_api,
+        postgres_store,
+        AuditLog(postgres_store),
+        incident_id=mismatch_id,
+        prompt_version="P2",
+        sample_size=100,
+    )
+    mismatch_record = await postgres_store.get_incident(mismatch_id)
+    assert mismatch["status"] == "validation_failed"
+    assert (
+        mismatch_record.evidence["validations"]["P2"]["status"] == "stale_or_mismatched"
+    )
+
+    changed_id, changed_wf = (
+        "incident-validation-changed",
+        "workflow-validation-changed",
+    )
+    await _seed_candidate_incident(postgres_store, changed_id, changed_wf)
+    changed_api = _SuggestionAPI(
+        workflow_id=changed_wf, bump_config_after_validation=True
+    )
+    changed = await validate_incident_candidate(
+        changed_api,
+        postgres_store,
+        AuditLog(postgres_store),
+        incident_id=changed_id,
+        prompt_version="P2",
+        sample_size=100,
+    )
+    changed_record = await postgres_store.get_incident(changed_id)
+    assert changed["status"] == "validation_failed"
+    assert (
+        changed_record.evidence["validations"]["P2"]["status"] == "stale_or_mismatched"
+    )
+
+
+@pytest.mark.anyio
+async def test_validation_stale_ambiguous_and_insufficient_credit_paths(postgres_store):
+    stale_id, stale_wf = "incident-validation-stale", "workflow-validation-stale"
+    await _seed_candidate_incident(postgres_store, stale_id, stale_wf)
+    stale_api = _SuggestionAPI(workflow_id=stale_wf, config_version=4)
+    stale = await validate_incident_candidate(
+        stale_api,
+        postgres_store,
+        AuditLog(postgres_store),
+        incident_id=stale_id,
+        prompt_version="P2",
+        sample_size=100,
+    )
+    assert stale["status"] == "stale_or_unconfigured_validation"
+    assert stale_api.validation_posts == 0
+
+    ambiguous_id, ambiguous_wf = (
+        "incident-validation-ambiguous",
+        "workflow-validation-ambiguous",
+    )
+    await _seed_candidate_incident(postgres_store, ambiguous_id, ambiguous_wf)
+    ambiguous_api = _SuggestionAPI(
+        workflow_id=ambiguous_wf,
+        validation_error=AmbiguousPostError("/validation/runs", "lost response"),
+    )
+    arguments = {
+        "incident_id": ambiguous_id,
+        "prompt_version": "P2",
+        "sample_size": 100,
+    }
+    first = await validate_incident_candidate(
+        ambiguous_api, postgres_store, AuditLog(postgres_store), **arguments
+    )
+    second = await validate_incident_candidate(
+        ambiguous_api, postgres_store, AuditLog(postgres_store), **arguments
+    )
+    assert first["status"] == second["status"] == "validation_ambiguous"
+    assert ambiguous_api.validation_posts == 1
+
+    poor_id, poor_wf = "incident-validation-credit", "workflow-validation-credit"
+    await _seed_candidate_incident(postgres_store, poor_id, poor_wf)
+    poor_api = _SuggestionAPI(workflow_id=poor_wf, credits=0)
+    poor = await validate_incident_candidate(
+        poor_api,
+        postgres_store,
+        AuditLog(postgres_store),
+        incident_id=poor_id,
+        prompt_version="P2",
+        sample_size=100,
+    )
+    assert poor["status"] == "insufficient_credits"
+    assert poor_api.validation_posts == 0

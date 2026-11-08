@@ -185,6 +185,48 @@ class SimulatorClient:
             ) from None
         return _validate_suggestions(payload)
 
+    async def run_validation(
+        self, workflow_id: str, prompt_version: str, sample_size: int
+    ) -> dict[str, Any]:
+        """Run one documented synthetic safety validation; never retry the credit spend."""
+        if (
+            not isinstance(workflow_id, str)
+            or not workflow_id.strip()
+            or not isinstance(prompt_version, str)
+            or not prompt_version.strip()
+            or isinstance(sample_size, bool)
+            or not isinstance(sample_size, int)
+            or not 50 <= sample_size <= 2000
+        ):
+            raise ValueError("workflow, prompt and validation sample size are invalid")
+        path = "/validation/runs"
+        try:
+            response = await self._require_client().post(
+                path,
+                json={
+                    "workflow_id": workflow_id,
+                    "prompt_version": prompt_version,
+                    "n": sample_size,
+                },
+            )
+        except httpx.RequestError as exc:
+            raise AmbiguousPostError(
+                path, f"transport failure ({type(exc).__name__})"
+            ) from None
+        if 500 <= response.status_code <= 599:
+            raise AmbiguousPostError(
+                path,
+                f"server returned HTTP {response.status_code}; no validation lookup API is documented",
+            )
+        self._raise_for_status(response, path)
+        try:
+            payload = response.json()
+        except ValueError:
+            raise AmbiguousPostError(
+                path, "successful response was not valid JSON"
+            ) from None
+        return _validate_validation(payload)
+
     async def submit_approval(self, payload: dict[str, Any]) -> dict[str, Any]:
         """Send one approval request; ambiguous outcomes are never retried here."""
         path = "/approvals"
@@ -481,3 +523,51 @@ def _validate_suggestions(value: object) -> dict[str, Any]:
             raise SimulatorError("suggestion candidate is malformed")
         clean.append({"prompt_version": prompt_version, "summary": summary})
     return {"suggestions": clean, "credits_remaining": float(credits)}
+
+
+def _validate_validation(value: object) -> dict[str, Any]:
+    """Validate the documented result fields for one safety validation run."""
+    required = {
+        "validation_run_id",
+        "workflow_id",
+        "prompt_version",
+        "n",
+        "failures",
+        "pass_rate",
+        "ts",
+        "credits_remaining",
+    }
+    if not isinstance(value, dict) or set(value) != required:
+        raise SimulatorError("validation response has an unexpected schema")
+    if any(
+        not isinstance(value[name], str) or not value[name]
+        for name in ("validation_run_id", "workflow_id", "prompt_version", "ts")
+    ):
+        raise SimulatorError("validation response identity fields are invalid")
+    try:
+        timestamp = datetime.fromisoformat(value["ts"])
+    except ValueError:
+        raise SimulatorError("validation response timestamp is invalid") from None
+    if timestamp.tzinfo is None:
+        raise SimulatorError("validation response timestamp must include a timezone")
+    n, failures = value["n"], value["failures"]
+    pass_rate, credits = value["pass_rate"], value["credits_remaining"]
+    if (
+        isinstance(n, bool)
+        or not isinstance(n, int)
+        or not 50 <= n <= 2000
+        or isinstance(failures, bool)
+        or not isinstance(failures, int)
+        or not 0 <= failures <= n
+        or isinstance(pass_rate, bool)
+        or not isinstance(pass_rate, (int, float))
+        or not math.isfinite(pass_rate)
+        or not 0 <= pass_rate <= 1
+        or abs(float(pass_rate) - (1 - failures / n)) > 0.00011
+        or isinstance(credits, bool)
+        or not isinstance(credits, (int, float))
+        or not math.isfinite(credits)
+        or credits < 0
+    ):
+        raise SimulatorError("validation response statistics are invalid")
+    return {**value, "pass_rate": float(pass_rate), "credits_remaining": float(credits)}

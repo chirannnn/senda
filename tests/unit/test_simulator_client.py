@@ -273,6 +273,93 @@ async def test_suggestion_rejects_unexpected_candidate_fields():
 
 
 @pytest.mark.anyio
+async def test_validation_posts_documented_candidate_and_validates_bound_result():
+    seen = []
+
+    def handler(request):
+        seen.append((request.method, request.url.path, request.read()))
+        return httpx.Response(
+            200,
+            json={
+                "validation_run_id": "val_00001",
+                "workflow_id": "wf-1",
+                "prompt_version": "P2",
+                "n": 100,
+                "failures": 5,
+                "pass_rate": 0.95,
+                "ts": "2027-01-04T01:00:00+05:30",
+                "credits_remaining": 9,
+            },
+        )
+
+    client = SimulatorClient(_settings(), transport=httpx.MockTransport(handler))
+    async with client:
+        result = await client.run_validation("wf-1", "P2", 100)
+    assert result["validation_run_id"] == "val_00001"
+    assert result["pass_rate"] == 0.95
+    assert seen == [
+        (
+            "POST",
+            "/validation/runs",
+            b'{"workflow_id":"wf-1","prompt_version":"P2","n":100}',
+        )
+    ]
+
+
+@pytest.mark.anyio
+async def test_validation_post_timeout_is_ambiguous_and_never_retried():
+    attempts = 0
+
+    def handler(request):
+        nonlocal attempts
+        attempts += 1
+        raise httpx.ReadTimeout("validation response lost", request=request)
+
+    client = SimulatorClient(_settings(), transport=httpx.MockTransport(handler))
+    async with client:
+        with pytest.raises(AmbiguousPostError):
+            await client.run_validation("wf-1", "P2", 100)
+    assert attempts == 1
+
+
+@pytest.mark.anyio
+async def test_validation_rejects_inconsistent_stats_and_402_is_one_shot():
+    attempts = 0
+
+    def invalid(request):
+        return httpx.Response(
+            200,
+            json={
+                "validation_run_id": "val_00001",
+                "workflow_id": "wf-1",
+                "prompt_version": "P2",
+                "n": 100,
+                "failures": 5,
+                "pass_rate": 0.5,
+                "ts": "2027-01-04T01:00:00+05:30",
+                "credits_remaining": 9,
+            },
+        )
+
+    client = SimulatorClient(_settings(), transport=httpx.MockTransport(invalid))
+    async with client:
+        with pytest.raises(SimulatorError, match="statistics"):
+            await client.run_validation("wf-1", "P2", 100)
+
+    def out_of_credits(request):
+        nonlocal attempts
+        attempts += 1
+        return httpx.Response(402)
+
+    client = SimulatorClient(_settings(), transport=httpx.MockTransport(out_of_credits))
+    async with client:
+        with pytest.raises(SimulatorHTTPError) as exc_info:
+            await client.run_validation("wf-1", "P2", 100)
+    assert exc_info.value.status_code == 402
+    assert attempts == 1
+
+
+@pytest.mark.anyio
 async def test_governance_reads_and_approval_submission_use_documented_routes():
     approval = {
         "approval_id": "apr_00001",

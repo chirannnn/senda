@@ -3,7 +3,7 @@
 import pytest
 
 from controller.analytics.facts import derive_fact
-from controller.incidents import aggregate_population_qa
+from controller.incidents import aggregate_population_qa, validation_credit_cost
 from controller.storage.models import SimulatorEvent
 
 
@@ -102,3 +102,16 @@ async def test_incomplete_and_insufficient_population_is_rejected():
     assert not evidence.sufficient
     assert evidence.hallucination_rate is None
     assert evidence.incomplete_qa_calls == 1
+
+
+@pytest.mark.parametrize(
+    "sample_size, expected", [(50, 1), (100, 1), (101, 2), (2000, 20)]
+)
+def test_validation_cost_uses_documented_ceiling(sample_size, expected):
+    assert validation_credit_cost(sample_size) == expected
+
+
+@pytest.mark.parametrize("sample_size", [49, 2001, True, 100.0])
+def test_validation_cost_rejects_undocumented_sample_size(sample_size):
+    with pytest.raises(ValueError, match="sample size"):
+        validation_credit_cost(sample_size)
