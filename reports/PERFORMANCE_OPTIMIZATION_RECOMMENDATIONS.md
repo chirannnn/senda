@@ -235,5 +235,69 @@ measurement harness would make future profiles easier to reproduce.
 `fact_insert_execute_seconds` is client-observed elapsed time, not PostgreSQL
 server execution time. Database wait-event history, query-specific server
 timings, storage latency, and detailed CPU attribution between Python and the
-PostgreSQL server are not available from this run. No application code was
-changed, no full load test was run, and no 50-minute completion claim is made.
+PostgreSQL server are not available from this run. The profiling run itself
+made no application-code changes. No full load test was run, and no 50-minute
+completion claim is made.
+
+## Follow-up investigation and implementation
+
+### PostgreSQL investigation
+
+- PostgreSQL is 18.3. The `pg_stat_statements` extension package (1.12) is
+  available, but it is not installed and `shared_preload_libraries` is empty.
+  Enabling it would require a cluster-level configuration change and restart.
+  This cluster hosts multiple protected project databases, so this task did not
+  alter shared settings, restart PostgreSQL, or reset statistics.
+- A read-only `EXPLAIN (ANALYZE, BUFFERS, TIMING, SUMMARY)` for the bounded
+  1,000-row `simulator_events` page on the retained profile database used
+  `simulator_events_pkey`; PostgreSQL reported 0.740 ms execution time, 3.641
+  ms planning time, 86 shared buffer hits, and 4 shared buffer reads. The
+  Controller's aggregate page-read time was 134.315 seconds over 5,948 reads
+  (about 22.6 ms each). This single warm-range query is not representative of
+  every page, but it shows that Controller page-read time includes work beyond
+  the database executor.
+- Read-only `EXPLAIN` showed the fact insert's conflict arbiter is
+  `kpi_facts_pkey`. The table also maintains its three existing secondary
+  indexes and its source-event and workflow foreign keys. A 10-row
+  `EXPLAIN ANALYZE` probe in the isolated PostgreSQL test database, rolled back
+  in the same transaction, reported 0.427 ms server execution for event inserts
+  and 3.806 ms for fact inserts. The fact statement's row-level FK trigger
+  times were 2.338 ms for source-event references and 0.769 ms for workflow
+  references. This tiny probe confirms those checks have server cost, but it
+  cannot estimate large-batch time. Constraints and indexes remain unchanged.
+- No query-specific statistics were available for the 1,000-row fact inserts.
+  Client-observed `fact_insert_execute_seconds` therefore remains split-unknown
+  between serialization/driver work and PostgreSQL execution. COPY/staging,
+  index changes, and FK changes are deferred until a representative database
+  profile supports them.
+
+### Completed low-risk event insertion change
+
+Streaming chunk persistence now uses `DatabaseStore.insert_events_count()`.
+For a fresh batch it runs the same ordered, conflict-safe insert without
+`RETURNING event_id`, and uses PostgreSQL's affected-row count. This avoids
+transferring and materializing every newly inserted ID when the caller only
+needs a count. If the affected-row count indicates a conflict, it selects the
+bounded batch and compares every stored row's chunk, kind, and payload. The
+existing `insert_events()` ID-returning contract remains unchanged. Event rows
+and the checkpoint are still committed in the same transaction.
+
+Focused PostgreSQL storage, ingestion, and analytics tests passed (**31
+passed**), including SQL-shape inspection, no-readback on fresh batches,
+idempotent replay, conflicting replay rejection, and rollback. The full suite
+passed (**301 passed**); Ruff lint, repository-wide format check (106 files),
+compileall, and `git diff --check` passed. No schema or migration changed.
+
+This optimization removes the fresh-event ID result transfer and related
+Python bookkeeping, but no representative before/after timing was run. Do not
+claim a measured speedup or material effect on the 50-minute target. The
+conflict path now reads all IDs in the bounded insert batch when a conflict
+exists, a deliberate trade-off to avoid the normal-path `RETURNING` payload
+while retaining exact replay checks. Batch defaults remain 1,000 facts and 500
+events; changing them without comparable performance data is deferred.
+
+The dominant KPI fact insert stage (2,094.723 seconds in the partial profile)
+remains the primary unresolved performance cost. The event result optimization
+does not reduce fact insertion, row-level foreign-key checks, or index writes.
+Server-side query timing under a safe per-database statistics setup is the next
+evidence needed before choosing a fact SQL strategy.

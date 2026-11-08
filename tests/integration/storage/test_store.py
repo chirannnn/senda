@@ -82,6 +82,71 @@ async def test_new_event_batch_skips_conflict_readback_but_replay_checks_content
 
 
 @pytest.mark.anyio
+async def test_count_insert_avoids_returning_ids_and_validates_replay(
+    postgres_store,
+):
+    store = postgres_store
+    statements: list[str] = []
+
+    def record_statement(connection, cursor, statement, parameters, context, many):
+        statements.append(statement.lower())
+
+    sqlalchemy_event.listen(
+        store.engine.sync_engine, "before_cursor_execute", record_statement
+    )
+    try:
+        batch = [_event(920121), _event(920122)]
+        async with store.transaction() as session:
+            assert await store.insert_events_count(session, batch) == 2
+        insert_sql = next(
+            sql for sql in statements if sql.lstrip().startswith("insert")
+        )
+        assert "returning" not in insert_sql
+        fresh_batch_selects = [
+            sql
+            for sql in statements
+            if sql.lstrip().startswith("select") and "simulator_events" in sql
+        ]
+        assert fresh_batch_selects == []
+
+        statements.clear()
+        async with store.transaction() as session:
+            assert await store.insert_events_count(session, batch) == 0
+        replay_selects = [
+            sql
+            for sql in statements
+            if sql.lstrip().startswith("select") and "simulator_events" in sql
+        ]
+        assert len(replay_selects) == 1
+        assert "event_id in" in replay_selects[0]
+    finally:
+        sqlalchemy_event.remove(
+            store.engine.sync_engine, "before_cursor_execute", record_statement
+        )
+
+
+@pytest.mark.anyio
+async def test_count_insert_detects_conflicts_and_rolls_back_new_rows(postgres_store):
+    store = postgres_store
+    existing = _event(920131)
+    async with store.transaction() as session:
+        await store.insert_events(session, [existing])
+
+    with pytest.raises(EventConflictError):
+        async with store.transaction() as session:
+            await store.insert_events_count(
+                session,
+                [
+                    _event(920132),
+                    _event(existing.event_id, payload={"different": True}),
+                ],
+            )
+
+    assert await store.get_event(920132) is None
+    assert await store.get_checkpoint("simulator") is None
+
+
+@pytest.mark.anyio
 async def test_conflicting_replay_fails_instead_of_hiding_corruption(postgres_store):
     store = postgres_store
     event = _event(920002)

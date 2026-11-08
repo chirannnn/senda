@@ -287,6 +287,93 @@ class DatabaseStore:
                 )
         return inserted_ids
 
+    async def insert_events_count(
+        self,
+        session: AsyncSession,
+        events: list[EventRecord],
+        *,
+        telemetry: RuntimeTelemetry | None = None,
+    ) -> int:
+        """Insert events without returning IDs on the common fresh-batch path.
+
+        If PostgreSQL reports a conflict, read the bounded batch back and compare
+        every stored row before treating it as an idempotent replay.
+        """
+        self._ensure_open()
+        if not events:
+            return 0
+        if len(events) > MAX_EVENT_INSERT_BATCH_ROWS:
+            raise ValueError(
+                "event batch exceeds PostgreSQL's "
+                f"{MAX_EVENT_INSERT_BATCH_ROWS}-row limit"
+            )
+        if not session.in_transaction():
+            raise RuntimeError(
+                "insert_events_count requires an active store transaction"
+            )
+
+        event_by_id: dict[int, EventRecord] = {}
+        for event in events:
+            previous = event_by_id.get(event.event_id)
+            if previous is not None and previous != event:
+                raise EventConflictError(
+                    f"event ID {event.event_id} has conflicting content in one batch"
+                )
+            event_by_id[event.event_id] = event
+
+        statement = (
+            postgresql_insert(SimulatorEvent)
+            .values(
+                [
+                    {
+                        "event_id": event.event_id,
+                        "chunk_number": event.chunk_number,
+                        "kind": event.kind,
+                        "payload": event.payload,
+                    }
+                    for event in events
+                ]
+            )
+            .on_conflict_do_nothing(index_elements=[SimulatorEvent.event_id])
+        )
+        with _observe_elapsed(telemetry, "event_insert_execute_seconds"):
+            result = await session.execute(statement)
+        inserted_count = result.rowcount
+        if (
+            inserted_count is None
+            or inserted_count < 0
+            or inserted_count > len(event_by_id)
+        ):
+            raise RuntimeError(
+                "database did not report a valid number of inserted simulator events"
+            )
+
+        if inserted_count < len(event_by_id):
+            with _observe_elapsed(telemetry, "event_conflict_lookup_seconds"):
+                persisted = (
+                    await session.execute(
+                        select(SimulatorEvent).where(
+                            SimulatorEvent.event_id.in_(event_by_id)
+                        )
+                    )
+                ).scalars()
+            persisted_by_id = {record.event_id: record for record in persisted}
+            for event_id, event in event_by_id.items():
+                existing = persisted_by_id.get(event_id)
+                if existing is None:
+                    raise RuntimeError(
+                        f"event ID {event_id} disappeared during conflict validation"
+                    )
+                if (
+                    existing.chunk_number != event.chunk_number
+                    or existing.kind != event.kind
+                    or existing.payload != event.payload
+                ):
+                    raise EventConflictError(
+                        f"event ID {event_id} was previously stored with different content"
+                    )
+        return inserted_count
+
     async def get_event(self, event_id: int) -> SimulatorEvent | None:
         """Read a raw stored event by its unique simulator ID."""
         self._ensure_open()
@@ -1318,13 +1405,13 @@ class DatabaseStore:
                     )
                 batch.append(event)
                 if len(batch) >= batch_size:
-                    inserted_count += len(
-                        await self.insert_events(session, batch, telemetry=telemetry)
+                    inserted_count += await self.insert_events_count(
+                        session, batch, telemetry=telemetry
                     )
                     batch.clear()
             if batch:
-                inserted_count += len(
-                    await self.insert_events(session, batch, telemetry=telemetry)
+                inserted_count += await self.insert_events_count(
+                    session, batch, telemetry=telemetry
                 )
             await self.advance_checkpoint(
                 session, checkpoint_key, chunk_number, telemetry=telemetry
