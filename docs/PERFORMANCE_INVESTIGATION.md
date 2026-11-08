@@ -104,3 +104,12 @@ reference writes; no full-run measurement has quantified their benefit. The
 saved report provides no statement, commit, WAL, lock, query-plan or I/O profile
 to support a new persistence strategy. No index, constraint, transaction, or
 WAL setting has been changed.
+
+Prefetch and parallel execution were reviewed and not implemented. The saved
+run measured 38.184 seconds of chunk-download time and 93.003 seconds of API
+request time out of 5,878.203 seconds; eliminating all observed chunk-download
+time would leave nearly the entire 50-minute target gap. CPU saturation and
+database wait are unknown, and checkpoint writes must stay ordered. Revisit
+concurrency only if corrected end-to-end profiling demonstrates a critical-path
+wait or CPU bottleneck with enough expected benefit to justify its recovery and
+backpressure complexity.
