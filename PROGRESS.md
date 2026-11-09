@@ -107,6 +107,19 @@ tracked below and in the final checklist.
 - Existing full/partial logs, samples, grader reports and benchmark databases
   remain untouched.
 
+### Chunk 10.7 — Repository cleanup
+
+- Added `reports/REPOSITORY_CLEANUP_AUDIT.md`. The temporary persistence
+  microbenchmark script is absent; only the maintained load measurement runner
+  remains under `scripts/`. No tracked local DB/SQLite or credential file was
+  found. `.env.example` contains placeholders and `.env` remains ignored.
+- Preserved `runs/`, `.venv`, ignored caches, simulator assets and all benchmark
+  evidence. No `runs/` contents were inspected and no generated/evidence file
+  was removed.
+- Kept dependencies because they support the Controller, test suite and
+  bundled simulator. `requirements.txt` has lower bounds and no lock file;
+  dependency-resolution reproducibility remains a limitation.
+
 | Chunk | Name | Status | Commit |
 |---|---|---|---|
 | 1 | Runtime and launcher | COMPLETE | `cfc28d2`, `730cf26`, `71bdd8a` (and earlier foundation/config commits listed below) |
