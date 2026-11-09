@@ -4,7 +4,7 @@
 
 **Current phase:** Chunk 10 final audit and submission preparation
 **Current chunk:** 10 - local submission package prepared; owner actions pending
-**Current next action:** Confirm actual hours in `SUBMISSION.md`; publish/share only through the owner's authorized submission workflow
+**Current next action:** Confirm actual hours in `SUBMISSION_TEMPLATE.md` and keep `SUBMISSION.md` consistent; publish/share only through the owner's authorized submission workflow
 
 ## Implementation progress
 
@@ -350,7 +350,7 @@ Do not rewrite prior history.
 
 ## Chunk 10 final status
 
-Chunks 1-9 are complete. The local Chunk 10 package is prepared and verified. The actual-hours field in `SUBMISSION.md`, publishing the local commits, and granting reviewer access remain pending; therefore Chunk 10 is not marked fully complete.
+Chunks 1-9 are complete. The local Chunk 10 package is prepared and verified. The actual-hours field in `SUBMISSION_TEMPLATE.md` and its matching `SUBMISSION.md` copy, publishing the local commits, and granting reviewer access remain pending; therefore Chunk 10 is not marked fully complete.
 
 ### Chunk 3 measured evidence (synthetic HTTP stream, PostgreSQL 18)
 
@@ -582,9 +582,11 @@ Known limits: the synthetic 30,000-event development-host measurement is not a g
   final security review found no known secret values; `.env.example` contains
   placeholders only.
 - **Chunk 10 status: PREPARED LOCALLY; external/owner actions pending.** The
-  local package includes the required `SUBMISSION.md`, public_01/public_02
-  grader reports, public_03 load report, crash-recovery evidence, and
-  incremental commits. The submitter must confirm actual hours, confirm
-  the remote, publish/transfer local commits and grant reviewer access. These
+  local package includes the filled evaluator-facing `SUBMISSION_TEMPLATE.md`
+  and its matching `SUBMISSION.md` copy, public_01/public_02 grader reports,
+  the public_03 load report, crash-recovery evidence, and
+  incremental commits. The submitter must confirm actual hours in the official
+  `SUBMISSION_TEMPLATE.md` and matching `SUBMISSION.md`, confirm the remote,
+  publish/transfer local commits and grant reviewer access. These
   steps were not performed because no push or external submission was
   authorized. The 50-minute target remains unverified.

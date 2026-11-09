@@ -10,6 +10,7 @@ The Controller ingests documented simulator events, stores durable KPI facts, an
 public_01 finished unchanged (297,024 events, zero changes); public_02 applied one human-approved prompt change graded beneficial (four credits).
 The original full public_03 run took 97.97 minutes. COPY staging improved isolated 1,000-row fixtures, but the 50-minute target remains unverified.
 Automatic decay rollback, call-time and caller-ID optimization, a supervisor UI, and runtime-scheduled experiments were not built.
+
 ## 1. Assumptions
 
 1. Simulator HTTP responses and `docs/SIMULATOR.md` are authoritative. Scenario files, simulator implementation and run directories are not Controller decision inputs.
@@ -154,16 +155,23 @@ for review. More detail and a Mermaid diagram are in `docs/ARCHITECTURE.md`.
 - **Minimum evidence:** experiments calculate required trial counts from
   explicit baseline rate, allocation, mean cluster size, ICC, alpha, power,
   MDE and comparison count. There is no hidden universal business threshold.
-  Incident QA uses a 30-distinct-person/75%-completeness engineering gate.
-- **Experiment design:** one cohort, one changed dimension, one control and up
-  to three declared challengers per config version. No automatic experiment
-  assignment/scheduling exists. Welcome-by-voice interactions are not
-  estimated; they require a separately declared design.
-- **Winner selection:** deterministic person-cluster bootstrap and Holm
-  correction, frozen time window/event cutoff and full planned family. The
-  configurable 5-point MDE is an engineering default, not a business target.
-  No LLM selects winners. Person crossovers are excluded because sticky arm
-  assignment is not guaranteed.
+  Incident QA uses a 30-distinct-person/75%-completeness engineering gate to
+  avoid acting on sparse or incomplete QA evidence; it is an engineering rule,
+  not a calibrated false-positive guarantee.
+- **Experiment design:** the caller declares allocations and assumptions; the
+  evaluator counts observed exposure only. It uses one cohort, one changed
+  dimension, one control and up to three challengers per config version to
+  limit traffic fragmentation. There is no runtime traffic assignment or
+  exploration/exploitation scheduler. Welcome-by-voice interactions require a
+  separately declared design and are not estimated here.
+- **Winner selection:** a frozen time window, event cutoff and full planned
+  comparison family prevent repeated unadjusted peeking. Deterministic
+  person-cluster bootstrap and Holm correction use the caller's alpha and
+  comparison count; no LLM selects winners. The configured 5-point MDE is an
+  engineering default, not a business target. The false-winner bound follows
+  declared statistical assumptions; an empirical false-positive rate was not
+  measured. Person crossovers are excluded because sticky arm assignment is
+  not guaranteed.
 - **Decay/rollback:** automatic C7 decay detection and rollback are not
   implemented. A harmful incident monitor can only submit a new proposal
   through approval against current config; it does not roll back directly.
@@ -182,12 +190,16 @@ Proposal and apply intents are committed before remote writes. Lost responses
 are reconciled via approval lookup, current config and config history; when
 remote state remains ambiguous, the operation stops for manual review.
 
-The runtime does not implement approver-hours scheduling, batching under
-fatigue caps, or policy-permitted auto-apply. It uses approval for prompt
-changes. Proposal payloads carry diff, affected estimate, dry-run field,
-impact score, rationale and evidence, but a general historical dry-run and a
-validated common impact scorer are not complete. Supervisor edits change the
-config version and prevent stale apply.
+The simulator enforces approval TTL and apply windows; the Controller polls
+within bounded limits and handles expired/lapsed decisions. It does not schedule
+around approver hours or batch under fatigue caps. It has no auto-apply path
+for customer-facing prompt changes. Expired or stale proposals are not replayed
+as-is; a new evidence snapshot and proposal identity are needed. Proposal
+payloads carry a diff, affected estimate, dry-run field, impact score, rationale
+and evidence, but a general historical dry-run and validated common impact
+scorer are not implemented, so those fields are not presented as calibrated
+impact forecasts. Supervisor edits change the config version and prevent
+stale apply.
 
 ## 7. Incidents
 
@@ -200,9 +212,11 @@ engineering triage gate, not business significance. This nominal threshold is
 not a measured false-positive rate; repeated monitoring and proxy-label
 quality were not calibrated to estimate one.
 
-The Controller observed 200 credits, spent 3 on one suggestion request, kept
-allowlisted candidates, and validated P1 at `n=100`; pass rate was 98% against
-the workflow's 97% floor, using 1 credit. Proposal
+The Controller requested candidates only after population evidence passed its
+triage gate, treated the response as untrusted, kept only allowlisted prompt
+IDs, and deterministically selected the first allowed candidate, P1. It
+validated P1 at `n=100`; pass rate was 98% against the workflow's 97% floor,
+using 1 credit. Only the approved validated change could proceed to apply. Proposal
 `incident-69d4b4d0595dd7d3131ef27e3a05ed5a` was approved as `apr_00001` and
 applied at config version 3. Total spend was 4 credits. Post-apply QA and
 engagement had only 11 paired people versus the 30-person gate; the snapshot
@@ -229,6 +243,7 @@ partition design would need to retain ordered ingestion and independent,
 durable workflow checkpoints; it has not been implemented or validated.
 See `reports/FINAL_PERFORMANCE_REPORT.md` and
 `reports/public_03_load_review.md` for the measurement limitations.
+
 ## 9. Reliability
 
 `reports/crash_recovery.md` records two real Controller process kills. During
@@ -236,13 +251,30 @@ partial chunk insertion, uncommitted rows and checkpoint rolled back; restart
 reingested the chunk, then finished with 324,308 unique event IDs and
 checkpoint 490. During pending approval, restart reconciled by proposal ID
 without a second approval POST; the same approved config version 3 was applied
-once. Integration tests additionally exercise duplicate/conflicting replay,
+once. No committed event was lost; the in-flight chunk and its checkpoint
+rolled back together and the chunk was replayed. Event IDs plus stable proposal
+and approval IDs support duplicate detection and remote reconciliation.
+Integration tests additionally exercise duplicate/conflicting replay,
 checkpoint atomicity, lost POST responses, repeated starts and manual-review
 states.
 
-GET requests use bounded retry behavior. Writes are not blindly retried after
-ambiguous outcomes. Event reads can be replayed locally by unique event ID;
-remote exactly-once delivery is not claimed. The Controller classifies
+Final isolated PostgreSQL verification used database
+`formi_perf_verify_20261109`: `pytest -q tests/unit tests/contract` passed
+**214 tests**, `CONTROLLER_TEST_DATABASE_URL=<isolated DB> python -m pytest -q
+tests/integration` passed **92 tests**, and `pytest -q` passed **306 tests**.
+Alembic downgrade from 0009 to 0008, upgrade to head, and `alembic check`
+passed with no schema drift. `ruff check .`, `ruff format --check .`,
+`python -B -m compileall -q controller tests scripts migrations`, and
+`git diff --check` passed. PostgreSQL integration tests covered COPY
+persistence, duplicate and conflicting replay, rollback, event/checkpoint
+atomicity, repeated startup migrations, and subprocess crash recovery.
+
+GET requests retry only the documented retryable set (408, 429 and 5xx) with
+bounded backoff. Ordinary 4xx responses are surfaced as HTTP errors. POST
+writes are never blindly retried; transport failures and 5xx results are treated
+as ambiguous and reconciled where documented APIs permit it. Event reads can
+be replayed locally by unique event ID; remote exactly-once delivery is not
+claimed. The Controller classifies
 nonretryable HTTP errors, halts when required data cannot be reconciled, and
 keeps a durable outbox/audit record.
 
@@ -268,8 +300,10 @@ filters are in `controller/storage/audit.py` and tested in
 The runtime emits JSON records, per-advance heartbeats and final metrics for
 ingestion lag, API errors/latencies, event/fact counts, credits and rates. In a
 production deployment, page on unresolved remote ambiguity, stalled
-checkpoints, DB failure, excessive lag or resource exhaustion. Alert delivery
-is not built into this CLI.
+checkpoints, DB failure, sustained excessive lag or resource exhaustion. Do
+not page on a bounded retry that recovers, an approval still pending within its
+TTL, or a KPI fluctuation without sufficient evidence. These are proposed
+operational rules; alert delivery and paging are not built into this CLI.
 
 ## 11. Results
 
@@ -355,4 +389,3 @@ not full-run results.
    surface before scaling to many workflows.
 6. Calibrate population QA criteria and consider decay/rollback only with
    explicit human policy and crash-safe approval semantics.
-

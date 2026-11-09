@@ -146,7 +146,7 @@ Current status: Chunks 1-9 are complete; Chunk 10's local package is prepared, b
 | 7. Public incident workflow | COMPLETE | Six subtask commits and public scenario report recorded in `PROGRESS.md` |
 | 8. Crash recovery demonstration | COMPLETE | Six subtask commits and real crash evidence recorded in `PROGRESS.md` and `reports/crash_recovery.md` |
 | 9. Load and observability | COMPLETE | Full and partial reports, stage telemetry, and verification recorded in `PROGRESS.md` and `reports/` |
-| 10. Submission and final grading | PREPARED LOCALLY | Required reports and `SUBMISSION.md` exist and are verified; the actual-hours field, publishing local commits and reviewer access remain pending |
+| 10. Submission and final grading | PREPARED LOCALLY | Official `SUBMISSION_TEMPLATE.md` is filled and `SUBMISSION.md` is its matching copy; actual hours, publishing local commits and reviewer access remain pending |
 
 ### Chunk 1 — Runtime and launcher
 - **Objective/why:** replace naive launch with unattended `run.sh <SIM_URL>` and clean lifecycle.
