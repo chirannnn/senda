@@ -120,6 +120,16 @@ tracked below and in the final checklist.
   bundled simulator. `requirements.txt` has lower bounds and no lock file;
   dependency-resolution reproducibility remains a limitation.
 
+### Chunk 10.8 — Final submission report
+
+- Added `reports/FINAL_SUBMISSION_REPORT.md` with project/architecture, data
+  model and ingestion, KPI definitions, statistical policy, governance and
+  incident flow, crash/idempotency, security, observability, actual public
+  scenario results, performance measurements, verification and known limits.
+- The report distinguishes full, partial and fixture results and explicitly
+  states that the 50-minute target remains unverified. It references actual
+  reports rather than fabricating missing measurements.
+
 | Chunk | Name | Status | Commit |
 |---|---|---|---|
 | 1 | Runtime and launcher | COMPLETE | `cfc28d2`, `730cf26`, `71bdd8a` (and earlier foundation/config commits listed below) |
