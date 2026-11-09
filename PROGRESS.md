@@ -56,6 +56,43 @@ tracked below and in the final checklist.
   authentication/TLS requirements and compliance rules not exposed by the
   workflow policy remain unverified. No code change was required.
 
+### Chunk 10.4 — Test and migration verification
+
+- Created/reused only the dedicated isolated PostgreSQL verification database
+  `formi_perf_verify_20261109`; the retained public benchmark DB was not the
+  test target. No PostgreSQL integration tests were skipped.
+- `pytest -q tests/unit tests/contract`: **214 passed in 9.14s**.
+- `CONTROLLER_TEST_DATABASE_URL=<isolated DB> python -m pytest -q
+  tests/integration`: **92 passed in 18.49s**.
+- Full suite with that URL set: **306 passed in 27.39s**.
+- Reversibility: `alembic downgrade 0008_incident_evidence` recreated the
+  concurrent event index; `alembic upgrade head` removed it again; final
+  `alembic check` reported no pending operations. Final revision was
+  `0009_drop_unused_event_idx`.
+- Integration coverage includes duplicate/conflicting event replay, same-batch
+  duplicate IDs, chunk/checkpoint rollback, KPI/cursor rollback, repeated
+  startup migration, and real subprocess crash recovery for chunk ingestion
+  and pending approval. No simulator HTTP service was used by these tests.
+
+### Chunk 10.5 — Developer setup and architecture documentation
+
+- Added `docs/ARCHITECTURE.md` with component boundaries, Mermaid runtime flow,
+  persistence/recovery guarantees, technology rationale, and explicit scope
+  limits.
+- Added placeholder-only `.env.example`; Docker Compose reads its
+  `POSTGRES_*` values, while the CLI requires `CONTROLLER_DATABASE_URL` in the
+  process environment. README now documents Python/PostgreSQL prerequisites,
+  Compose and migration setup, Controller/simulator startup, disposable test
+  DB creation, test/lint/compile commands, API docs, troubleshooting, and
+  known performance/capability limits.
+- Corrected stale README text: runtime invokes population incident processing
+  after startup and committed advances; experiment plans remain callable and
+  are not auto-scheduled.
+- The setup explicitly warns that PostgreSQL integration fixtures delete
+  Controller table rows before each test, so only a disposable test database
+  may be used. No project or benchmark database was changed by documentation
+  work.
+
 | Chunk | Name | Status | Commit |
 |---|---|---|---|
 | 1 | Runtime and launcher | COMPLETE | `cfc28d2`, `730cf26`, `71bdd8a` (and earlier foundation/config commits listed below) |

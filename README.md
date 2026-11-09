@@ -97,8 +97,80 @@ stops after any in-flight HTTP operation finishes. JSON logs go to stderr; the s
 are not logged. An ambiguous advance response exits safely without issuing another advance.
 
 The runtime persists simulator events and advance intents, then derives durable event facts after startup
-reconciliation and each committed advance. It does not schedule experiments or automatically invoke governance;
-those remain explicit callable components.
+reconciliation and each committed advance. It invokes population incident processing after startup and every
+committed advance; evidence-gated incident proposals use the existing approval lifecycle. Statistical experiment
+evaluation is implemented as a callable component but is not automatically scheduled because its fixed plan
+requires baseline, allocation and clustering assumptions that the simulator API does not provide. See
+[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the execution sequence and component boundaries.
+
+### Local developer setup
+
+Prerequisites are Python 3.12 and PostgreSQL 18. Docker Compose is optional and is used only for local
+PostgreSQL; `run.sh` does not start Docker. The checked-in `requirements.txt` includes Controller and simulator
+runtime/test dependencies. `ruff` is used for lint and format checks but is installed separately.
+
+PowerShell:
+
+```powershell
+Copy-Item .env.example .env
+# Edit .env and replace the placeholder POSTGRES_PASSWORD with a local password.
+py -3.12 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+docker compose -f docker-compose.dev.yml up -d postgres
+$env:CONTROLLER_DATABASE_URL = 'postgresql+asyncpg://formi_dev:<password>@127.0.0.1:5433/formi_dev'
+.\.venv\Scripts\python.exe -m alembic -c alembic.ini upgrade head
+```
+
+Linux/macOS with Bash:
+
+```bash
+cp .env.example .env
+# Edit .env and replace the placeholder POSTGRES_PASSWORD with a local password.
+python3.12 -m venv .venv
+.venv/bin/python -m pip install -r requirements.txt
+docker compose -f docker-compose.dev.yml up -d postgres
+export CONTROLLER_DATABASE_URL='postgresql+asyncpg://formi_dev:<password>@127.0.0.1:5433/formi_dev'
+.venv/bin/python -m alembic -c alembic.ini upgrade head
+```
+
+Compose reads `.env` for the three `POSTGRES_*` values. The Python application does not load `.env`; set
+`CONTROLLER_DATABASE_URL` in the shell where the Controller or Alembic command runs. The example credentials
+are placeholders and must be replaced locally. Do not commit `.env` or use these examples as production
+credentials. PostgreSQL is bound to loopback port 5433; an existing host PostgreSQL service may use port 5432.
+
+To run the Controller, start a simulator in a separate terminal and then run `./run.sh <SIM_URL>` from Git
+Bash. In PowerShell, use `.\.venv\Scripts\python.exe -m controller http://127.0.0.1:8700`. API schemas and
+behavior are documented in [`docs/SIMULATOR.md`](docs/SIMULATOR.md); when a simulator is running, its OpenAPI
+docs are available at `/docs`.
+
+For PostgreSQL tests, create a **separate disposable database** and set
+`CONTROLLER_TEST_DATABASE_URL` to it. The integration fixture applies migrations and deletes rows from the
+Controller tables before each database test; never point it at development, benchmark, or assessment data.
+With the example Compose user, create the database with
+`docker compose -f docker-compose.dev.yml exec postgres createdb -U formi_dev formi_test`, then set:
+
+```powershell
+$env:CONTROLLER_TEST_DATABASE_URL = 'postgresql+asyncpg://formi_dev:<password>@127.0.0.1:5433/formi_test'
+```
+
+Run `python -m pytest -q` (or the virtual environment's Python `-m pytest -q`) for unit, contract and
+PostgreSQL integration tests. Install Ruff separately with `python -m pip install ruff` to run `ruff check .`
+and `ruff format --check .`. `python -m compileall -q controller tests` checks compilation. Use
+`python -m alembic -c alembic.ini current` and `python -m alembic -c alembic.ini check` to inspect migration
+state and schema parity.
+
+### Troubleshooting
+
+- **Controller cannot reach PostgreSQL:** confirm the service is running, the URL's host/port/database/user
+  match it, and the password characters are URL-encoded if needed. The Compose service uses port 5433.
+- **Tests say PostgreSQL tests are skipped:** set `CONTROLLER_TEST_DATABASE_URL` before pytest and confirm
+  it names the disposable test database. Do not remove the fixture's safety by pointing at another DB.
+- **Migrations report drift:** inspect `alembic current` and `alembic check` against the same database URL
+  used by the Controller. Startup applies checked-in migrations; do not edit the benchmark database.
+- **Simulator returns an ambiguous write result:** the Controller reconciles documented remote state; if it
+  cannot prove the result, it halts the affected operation for review rather than blindly retrying.
+- **No proposal appears:** experiment plans are not auto-scheduled; incident actions require population,
+  quality, credit, validation and current-config gates. Insufficient evidence intentionally produces no change.
 
 ### Runtime telemetry (Chunk 9)
 
@@ -311,6 +383,20 @@ prompt changes, waits for a fixed population QA evidence gate, then uses credit-
 validation and the Chunk 5 approval/apply lifecycle. It records one post-apply monitoring snapshot and makes a
 new governed proposal only when the evidence gate supports it. It never auto-rolls back a prompt. See
 [`docs/INCIDENT_POLICY.md`](docs/INCIDENT_POLICY.md) for the engineering evidence defaults and limitations.
+
+### Current limitations and performance status
+
+The historical full `public_03_load` run took 5,878.203 seconds (97.97 minutes) and failed the assignment's
+one-simulated-day-under-10-wall-minutes SRE criterion. PostgreSQL COPY staging and other persistence changes
+have since shown improvements in isolated 1,000-row fixtures, but the full workload has not been rerun. The
+under-50-minute target is therefore **unverified**. See
+[`reports/PERFORMANCE_OPTIMIZATION_RECOMMENDATIONS.md`](reports/PERFORMANCE_OPTIMIZATION_RECOMMENDATIONS.md)
+for measured fixture results and limits.
+
+Experiment evaluation requires an explicit fixed plan and is not automatically scheduled. Automatic C7 decay
+detection/rollback, caller-ID health, call-time optimization, a consolidated supervisor view, approver-aware
+batch scheduling, and cross-tenant credit fairness are outside the implemented scope. Simulator API
+authentication is not specified by the contract and is unverified for production deployment.
 
 **Floor (mandatory):** the controller runs public_01 and public_02 end to end with no manual steps, keeps an
 audit trail (C12, even a minimal one), never breaks the constraints above, and `SUBMISSION.md` is complete.
