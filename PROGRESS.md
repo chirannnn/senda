@@ -16,6 +16,32 @@ recovered unchanged into `reports/public_01.md` from its temporary output
 directory. Remaining Chunk 10 audits, documentation and final verification are
 tracked below and in the final checklist.
 
+### Chunk 10.1 — Requirement audit
+
+- Added `reports/REQUIREMENT_IMPLEMENTATION_AUDIT.md`, mapping C1–C15, safety
+  invariants, scenario artifacts, and required submission materials to actual
+  source paths, tests, and reports. It distinguishes complete, partial,
+  deferred/not applicable, missing, and unverified items.
+- `PROJECT.md` is absent; the assignment brief is present in `README.md` and
+  delivery questions are in `SUBMISSION_TEMPLATE.md`. The public_01 grader
+  artifact was found in the exact temporary directory referenced by prior
+  progress notes and copied without alteration; source and destination SHA-256
+  are identical.
+- Corrected `PLAN.md`'s inconsistent Chunk 9 status to COMPLETE and set Chunk
+  10 to IN PROGRESS. No source code was changed.
+- Audit commit: `cefc1a3 docs(audit): map assignment requirements to evidence`.
+
+### Chunk 10.2 — Architecture and code quality audit
+
+- Reviewed runtime/client lifetime, HTTP retry and validation boundaries,
+  event/fact COPY transactions, migration ownership, checkpoint/replay,
+  governance reconciliation, audit persistence, and test coverage. Findings
+  are in `reports/CODE_QUALITY_AUDIT.md`.
+- No material code correctness or security defect requiring a source change
+  was found. Identified documentation and setup gaps are addressed in
+  subsequent Chunk 10 subtasks. No scenario, simulator, or database evidence
+  was modified as part of the review.
+
 | Chunk | Name | Status | Commit |
 |---|---|---|---|
 | 1 | Runtime and launcher | COMPLETE | `cfc28d2`, `730cf26`, `71bdd8a` (and earlier foundation/config commits listed below) |
