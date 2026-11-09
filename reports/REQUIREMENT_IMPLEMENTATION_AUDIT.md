@@ -45,7 +45,7 @@ evidence.
 | Public_02 grader/run report | COMPLETE | `reports/public_02.md` | Recorded one approved prompt change, applied and graded beneficial; four credits used. |
 | Public_03 full benchmark | COMPLETE as historical evidence; current target UNVERIFIED | `reports/public_03_load.md`, `.jsonl`, samples and review note | Historical run: 97.97 minutes, 9,737,439 events; SRE one-day target failed. No full run after COPY optimization. |
 | 50-minute target | UNVERIFIED | `reports/PERFORMANCE_OPTIMIZATION_RECOMMENDATIONS.md` | Explicitly not rerun. Fixture speedups do not establish full-run runtime. |
-| Assignment stakeholder responses | MISSING at audit start | Six source memos in `stakeholders/`; `SUBMISSION_TEMPLATE.md` | Will be included in the prepared `SUBMISSION.md`; claims must be checked against policy/contract. |
+| Assignment stakeholder responses | COMPLETE | `SUBMISSION.md`; six source memos in `stakeholders/` | Six concise replies included; owner identity/time fields remain to be filled. |
 | `PROJECT.md` | MISSING | Not present in repository | No substitute document was supplied; architecture is documented separately. |
 | Repository URL/access | UNVERIFIED | Not supplied in repository | Must be filled in by the owner before sharing. |
 

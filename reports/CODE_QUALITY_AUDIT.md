@@ -76,8 +76,8 @@ and contract tests. No source changes were justified by a clear material defect.
   defect was identified in the reviewed code.
 - Documentation was inconsistent: README claimed governance was never invoked
   by runtime, while `run_controller()` invokes population incident processing
-  after startup and each advance. This documentation issue is corrected in the
-  developer documentation task.
+  after startup and each advance. The README now documents the runtime incident
+  hook and separately explains that experiments are not automatically scheduled.
 - Statistical experiment evaluation is not scheduled by the runtime; the
   required plan assumptions are caller-provided. This is an explicit current
   capability boundary, not an implicit guarantee of autonomous experimentation.

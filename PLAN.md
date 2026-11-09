@@ -4,7 +4,7 @@
 
 Build a single-process controller that runs `./run.sh <SIM_URL>` to completion, consumes only the simulator HTTP contract, optimizes each workflow's declared primary KPI while protecting its separate guardrail, submits every controller-initiated customer-facing change through governance, and keeps a restart-safe audit trail. The mandatory delivery floor is unattended `public_01_dev` and `public_02_incidents`, C12 auditability, constraint compliance, and completed `SUBMISSION.md`. Other capabilities are scoped below.
 
-This reviewed plan is the implementation specification. Chunks 1 through 9 are complete; Chunk 10 is IN PROGRESS. The statistical operating policy is documented in `docs/DECISION_POLICY.md`; optional capability scope remains unapproved until review. The approved infrastructure direction is Python 3.12 locally in `.venv`, PostgreSQL 18 in Docker for local development with a persistent named volume, SQLAlchemy async + asyncpg, and Alembic. If an assessment database is provided at execution, use it; otherwise use the configured local development PostgreSQL environment.
+This reviewed plan is the implementation specification. Chunks 1 through 9 are complete; Chunk 10 is PREPARED LOCALLY, with owner identity fields and external repository sharing still pending. The statistical operating policy is documented in `docs/DECISION_POLICY.md`; optional capability scope remains unapproved until review. The approved infrastructure direction is Python 3.12 locally in `.venv`, PostgreSQL 18 in Docker for local development with a persistent named volume, SQLAlchemy async + asyncpg, and Alembic. If an assessment database is provided at execution, use it; otherwise use the configured local development PostgreSQL environment.
 
 ## 2. Repository findings and verified contract
 
@@ -131,7 +131,7 @@ Persist incident/proposal states so restart recovers every phase. Never infer su
 
 ## 11. Incremental implementation chunks
 
-Current status: Chunks 1-9 are complete; Chunk 10 is in progress. The sections below preserve the implementation plan and acceptance criteria. Paths were planned new files unless existing files are named. Never modify `sim/`.
+Current status: Chunks 1-9 are complete; Chunk 10's local package is prepared, but owner-supplied identity fields and external repository sharing remain pending. The sections below preserve the implementation plan and acceptance criteria. Paths were planned new files unless existing files are named. Never modify `sim/`.
 
 ### Current chunk status
 
@@ -146,7 +146,7 @@ Current status: Chunks 1-9 are complete; Chunk 10 is in progress. The sections b
 | 7. Public incident workflow | COMPLETE | Six subtask commits and public scenario report recorded in `PROGRESS.md` |
 | 8. Crash recovery demonstration | COMPLETE | Six subtask commits and real crash evidence recorded in `PROGRESS.md` and `reports/crash_recovery.md` |
 | 9. Load and observability | COMPLETE | Full and partial reports, stage telemetry, and verification recorded in `PROGRESS.md` and `reports/` |
-| 10. Submission and final grading | IN PROGRESS | Requirement/code audit and submission artifacts are being prepared; final acceptance remains pending |
+| 10. Submission and final grading | PREPARED LOCALLY | Required reports and `SUBMISSION.md` exist and are verified; owner fields, publishing local commits and reviewer access remain pending |
 
 ### Chunk 1 — Runtime and launcher
 - **Objective/why:** replace naive launch with unattended `run.sh <SIM_URL>` and clean lifecycle.

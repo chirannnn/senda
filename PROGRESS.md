@@ -1,10 +1,10 @@
 # Progress Tracking â€” Outcome-First Agent Loop
 
-## Overall status: CHUNKS 1–9 COMPLETE; CHUNK 10 IN PROGRESS
+## Overall status: CHUNKS 1-9 COMPLETE; CHUNK 10 PREPARED LOCALLY
 
-**Current phase:** Chunk 9 load and observability complete
-**Current chunk:** 9 - Load and observability (complete)
-**Current next action:** Chunk 10 - Submission and final grading (NOT STARTED)
+**Current phase:** Chunk 10 final audit and submission preparation
+**Current chunk:** 10 - local submission package prepared; owner actions pending
+**Current next action:** Fill owner fields in `SUBMISSION.md`; publish/share only through the owner's authorized submission workflow
 
 ## Implementation progress
 
@@ -13,8 +13,8 @@ assignment audit is recorded in `reports/REQUIREMENT_IMPLEMENTATION_AUDIT.md`.
 Audit verified README as the available assignment brief; `PROJECT.md` was not
 present. The public_01 grader output cited in the earlier progress entry was
 recovered unchanged into `reports/public_01.md` from its temporary output
-directory. Remaining Chunk 10 audits, documentation and final verification are
-tracked below and in the final checklist.
+directory. The package and local verification are complete; external repository
+publication/access and owner-supplied identity/time fields remain pending.
 
 ### Chunk 10.1 — Requirement audit
 
@@ -141,7 +141,7 @@ tracked below and in the final checklist.
 | 7 | Public incident workflow | COMPLETE | `3d28f68`, `7a4dadf`, `88f71bc`, `aa59820`, `ade9e79`, `4a0f257` |
 | 8 | Crash recovery demonstration | COMPLETE | `7222007`, `b2ef987`, `3b3a521`, `9f6f61b`, `82ed4c7`, `6e11334` |
 | 9 | Load and observability | COMPLETE | `a1dab4d`, `fa5845a`, `41e52a0`, `74b43eb`, `6a18a96` |
-| 10 | Submission and final grading | NOT STARTED | planned |
+| 10 | Submission and final grading | PREPARED LOCALLY; OWNER ACTIONS PENDING | final package/report commits listed in Git history |
 
 ## Chunk 6 subtask progress
 
@@ -348,9 +348,9 @@ Chunk 2 commits (created incrementally; none pushed):
 
 Do not rewrite prior history.
 
-## Next action
+## Chunk 10 final status
 
-Chunks 1-9 are complete. Chunk 10 - Submission and final grading remains NOT STARTED.
+Chunks 1-9 are complete. The local Chunk 10 package is prepared and verified. Owner-supplied identity/time fields in `SUBMISSION.md`, publishing the local commits, and granting reviewer access remain pending; therefore Chunk 10 is not marked fully complete.
 
 ### Chunk 3 measured evidence (synthetic HTTP stream, PostgreSQL 18)
 
@@ -454,7 +454,8 @@ Known limits: the synthetic 30,000-event development-host measurement is not a g
 - PostgreSQL grew from 8,279,743 bytes to 9,441,285,823 bytes. The simulator ended with `finished=true`, `sim_minute=7200`, 268 chunks and `last_event_id=9737439`. No decisions were persisted and credits remained 400.
 - The original report, JSON log and sample file are retained unchanged as benchmark evidence. Review found its Windows RSS and CPU fields sampled only the Python launcher shim, producing invalid 4,546,560-byte RSS and zero CPU values. Whole-run process CPU and peak RSS are therefore unknown; read-only spot checks of the actual worker during execution were not a formal peak measurement. A separate review file describes this limitation. A Windows process-tree measurement fix is covered by focused tests and was not used to rerun the already-finished scenario.
 - The full test suite passed on the newly created isolated PostgreSQL database `formi_chunk9_final_20261108`: 281 passed. `ruff check .`, `ruff format --check .`, `python -B -m compileall -q controller tests scripts`, Alembic `upgrade head` and `check`, and `git diff --check` passed. Existing databases were not used for this verification.
-- Chunk 10 remains NOT STARTED. Nothing was pushed.
+- At the time of this historical Chunk 9 acceptance entry, Chunk 10 had not
+  started. No push occurred.
 
 ## Post-Chunk 9 targeted performance work
 
@@ -517,7 +518,10 @@ Known limits: the synthetic 30,000-event development-host measurement is not a g
 - Added focused tests for numeric counter deltas, unavailable scopes and nonnumeric values. The snapshot query was smoke-tested read-only against the isolated PostgreSQL test database; both statistics scopes were available. This validates instrumentation only; it is not a performance measurement.
 - Full isolated PostgreSQL suite: **303 passed**. `ruff check .`, `ruff format --check .` (106 files), compileall and `git diff --check` passed. No schema changes were made; Alembic was not needed.
 - Remaining candidates are deferred: projection is 47.694 seconds (about 1.3% of the 3,697.404-second 10% run); KPI insertion is expensive at the Controller call boundary but server execution is not separately measured; batch defaults have no comparable sweep; workflow/checkpoint stages are small in the saved profile; and prefetch/concurrency lacks worker/database wait evidence. Keep event/fact defaults at 500/1,000 and preserve serial cursor/checkpoint writes and all constraints.
-- No full load, stress test or large synthetic dataset was run. No previous benchmark evidence, simulator data, databases, or application behavior was changed. The 50-minute target remains unverified. Chunk 10 remains untouched.
+- At the time of this historical optimization phase, Chunk 10 had not started.
+  No full load, stress test or large synthetic dataset was run in that phase;
+  previous benchmark evidence and application behavior were unchanged. The
+  50-minute target remained unverified.
 
 
 ### Profile-backed index optimization
@@ -560,3 +564,27 @@ Known limits: the synthetic 30,000-event development-host measurement is not a g
 - The assignment asks repository access to the email on the form; it does not
   require an email draft or screenshots. No email was drafted or sent, no
   external upload occurred, and no push was made.
+
+### Chunk 10.10 — Final read-only review and handoff status
+
+- Rechecked plan/progress status, README runtime/setup instructions, the
+  requirement and security audits, architecture, public grader/run reports,
+  performance conclusions, submission contents, and checklist. Corrected
+  stale Chunk 10 status entries; no contradictory current completion claim
+  remains.
+- Final verification against isolated PostgreSQL database
+  `formi_perf_verify_20261109`: full suite **306 passed in 28.85s**; Alembic
+  current `0009_drop_unused_event_idx`; `alembic check` found no schema drift;
+  downgrade to `0008` and upgrade back to head had already passed. Ruff check,
+  format check (117 Python files), compileall and `git diff --check` passed.
+- No source-code, test, simulator, database benchmark, or raw performance
+  evidence changes were made in Chunk 10. No load or stress test was run. The
+  final security review found no known secret values; `.env.example` contains
+  placeholders only.
+- **Chunk 10 status: PREPARED LOCALLY; external/owner actions pending.** The
+  local package includes the required `SUBMISSION.md`, public_01/public_02
+  grader reports, public_03 load report, crash-recovery evidence, and
+  incremental commits. The submitter must fill name and actual hours, confirm
+  the remote, publish/transfer local commits and grant reviewer access. These
+  steps were not performed because no push or external submission was
+  authorized. The 50-minute target remains unverified.
