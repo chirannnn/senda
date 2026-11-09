@@ -42,6 +42,20 @@ tracked below and in the final checklist.
   subsequent Chunk 10 subtasks. No scenario, simulator, or database evidence
   was modified as part of the review.
 
+### Chunk 10.3 — Security and governance audit
+
+- Added `reports/SECURITY_GOVERNANCE_AUDIT.md`. Verified API use against
+  `docs/SIMULATOR.md`, checked for simulator imports and scenario/run-directory
+  reads in Controller code, reviewed direct config-write and approval paths,
+  logging/settings, `.gitignore`, Compose binding and Git history.
+- A limited pattern scan of 135 tracked files found no private-key, AWS-key,
+  credential-URL, or high-entropy credential-assignment matches; history
+  contained no private-key/AWS-key pattern commits. This is not a full
+  secret-scanning or penetration test.
+- The simulator contract documents no authentication scheme. Real deployment
+  authentication/TLS requirements and compliance rules not exposed by the
+  workflow policy remain unverified. No code change was required.
+
 | Chunk | Name | Status | Commit |
 |---|---|---|---|
 | 1 | Runtime and launcher | COMPLETE | `cfc28d2`, `730cf26`, `71bdd8a` (and earlier foundation/config commits listed below) |
