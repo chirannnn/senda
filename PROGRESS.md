@@ -1,12 +1,20 @@
 # Progress Tracking â€” Outcome-First Agent Loop
 
-## Overall status: COMPLETE THROUGH CHUNK 9
+## Overall status: CHUNKS 1–9 COMPLETE; CHUNK 10 IN PROGRESS
 
 **Current phase:** Chunk 9 load and observability complete
 **Current chunk:** 9 - Load and observability (complete)
 **Current next action:** Chunk 10 - Submission and final grading (NOT STARTED)
 
 ## Implementation progress
+
+Chunk 10 is the active final-audit/submission phase. The repository and
+assignment audit is recorded in `reports/REQUIREMENT_IMPLEMENTATION_AUDIT.md`.
+Audit verified README as the available assignment brief; `PROJECT.md` was not
+present. The public_01 grader output cited in the earlier progress entry was
+recovered unchanged into `reports/public_01.md` from its temporary output
+directory. Remaining Chunk 10 audits, documentation and final verification are
+tracked below and in the final checklist.
 
 | Chunk | Name | Status | Commit |
 |---|---|---|---|
