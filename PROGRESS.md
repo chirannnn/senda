@@ -93,6 +93,20 @@ tracked below and in the final checklist.
   may be used. No project or benchmark database was changed by documentation
   work.
 
+### Chunk 10.6 — Performance evidence audit
+
+- Added `reports/FINAL_PERFORMANCE_REPORT.md`, distinguishing the historical
+  full run, the pre-COPY partial profile, and small isolated INSERT/COPY
+  experiments. It records baseline/target, stage costs, implemented commits,
+  index/instrumentation changes, correctness evidence, deferred work and test
+  limitations.
+- The report states the required conclusion verbatim: **“The 50-minute
+  full-workload target remains unverified because the full benchmark was not
+  rerun after optimization.”** It makes no full-run speedup estimate from
+  microbenchmarks.
+- Existing full/partial logs, samples, grader reports and benchmark databases
+  remain untouched.
+
 | Chunk | Name | Status | Commit |
 |---|---|---|---|
 | 1 | Runtime and launcher | COMPLETE | `cfc28d2`, `730cf26`, `71bdd8a` (and earlier foundation/config commits listed below) |
