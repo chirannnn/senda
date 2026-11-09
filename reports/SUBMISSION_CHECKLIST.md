@@ -5,7 +5,7 @@ Checked: 2026-11-09. No external submission or GitHub push has been made.
 | Deliverable | Required or optional | Status | Location / verification |
 |---|---|---|---|
 | Controller and launcher | Required | COMPLETE | `controller/`, `run.sh`; README setup instructions reviewed. |
-| Assignment response | Required | READY — owner fields pending | `SUBMISSION.md`; fill in actual name and hours before sharing. |
+| Assignment response | Required | READY — actual hours pending | `SUBMISSION.md`; name is filled; enter actual hours before sharing. |
 | Public_01 grader output | Required | COMPLETE | `reports/public_01.md`; recovered unchanged from recorded temporary grader output; SHA-256 source/destination match. Shows zero changes and 0% KPI delta. |
 | Public_02 grader and incident results | Required | COMPLETE | `reports/public_02.md`; one approved change rated beneficial, credit and timeline evidence. |
 | Public_03 load numbers | Required | COMPLETE, target failed | `reports/public_03_load.md` and raw logs/samples. Historical full run: 97.97 minutes; SRE time criterion failed. |
@@ -27,7 +27,7 @@ Checked: 2026-11-09. No external submission or GitHub push has been made.
 
 ## Before external submission
 
-1. Fill the owner-supplied name and actual hours in `SUBMISSION.md`.
+1. Confirm and fill the actual hours in `SUBMISSION.md`; the candidate name is filled.
 2. Review every claim and response in `SUBMISSION.md` so the submitter can
    defend it in the interview.
 3. Confirm the configured GitHub origin is the intended private repository.

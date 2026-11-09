@@ -4,7 +4,7 @@
 
 **Current phase:** Chunk 10 final audit and submission preparation
 **Current chunk:** 10 - local submission package prepared; owner actions pending
-**Current next action:** Fill owner fields in `SUBMISSION.md`; publish/share only through the owner's authorized submission workflow
+**Current next action:** Confirm actual hours in `SUBMISSION.md`; publish/share only through the owner's authorized submission workflow
 
 ## Implementation progress
 
@@ -14,7 +14,7 @@ Audit verified README as the available assignment brief; `PROJECT.md` was not
 present. The public_01 grader output cited in the earlier progress entry was
 recovered unchanged into `reports/public_01.md` from its temporary output
 directory. The package and local verification are complete; external repository
-publication/access and owner-supplied identity/time fields remain pending.
+publication/access and the actual-hours field remain pending.
 
 ### Chunk 10.1 — Requirement audit
 
@@ -350,7 +350,7 @@ Do not rewrite prior history.
 
 ## Chunk 10 final status
 
-Chunks 1-9 are complete. The local Chunk 10 package is prepared and verified. Owner-supplied identity/time fields in `SUBMISSION.md`, publishing the local commits, and granting reviewer access remain pending; therefore Chunk 10 is not marked fully complete.
+Chunks 1-9 are complete. The local Chunk 10 package is prepared and verified. The actual-hours field in `SUBMISSION.md`, publishing the local commits, and granting reviewer access remain pending; therefore Chunk 10 is not marked fully complete.
 
 ### Chunk 3 measured evidence (synthetic HTTP stream, PostgreSQL 18)
 
@@ -584,7 +584,7 @@ Known limits: the synthetic 30,000-event development-host measurement is not a g
 - **Chunk 10 status: PREPARED LOCALLY; external/owner actions pending.** The
   local package includes the required `SUBMISSION.md`, public_01/public_02
   grader reports, public_03 load report, crash-recovery evidence, and
-  incremental commits. The submitter must fill name and actual hours, confirm
+  incremental commits. The submitter must confirm actual hours, confirm
   the remote, publish/transfer local commits and grant reviewer access. These
   steps were not performed because no push or external submission was
   authorized. The 50-minute target remains unverified.
