@@ -2,14 +2,15 @@
 
 **Name:** CHIRANJEEVI D · **Date:** 2026-11-09 · **Hours actually spent (be honest):** [NEEDS YOUR CONFIRMATION: enter actual hours] · **Language / storage:** Python 3.12 / PostgreSQL 18
 
-> This submission follows the official `SUBMISSION_TEMPLATE.md`. Actual hours and external repository access remain pending; confirm the hours before submission.
+> Official evaluator-facing submission. Confirm actual hours before submission; repository access has not been shared.
 
 ## 0. TL;DR
 
-The Controller ingests documented simulator events, stores durable KPI facts, and evaluates workflow changes through evidence and human approval.
-public_01 finished unchanged (297,024 events, zero changes); public_02 applied one human-approved prompt change graded beneficial (four credits).
-The original full public_03 run took 97.97 minutes. COPY staging improved isolated 1,000-row fixtures, but the 50-minute target remains unverified.
-Automatic decay rollback, call-time and caller-ID optimization, a supervisor UI, and runtime-scheduled experiments were not built.
+- The Controller ingests documented simulator events, derives separate KPI facts, and changes customer-facing configuration only through human approval.
+- `public_01` finished with no changes; `public_02` applied one approved prompt change graded beneficial, using four credits.
+- The pre-optimization full `public_03_load` took **5,878.203 seconds (97.97 minutes)** for **9,737,439 events**; its database reached about **8.79 GiB**.
+- On isolated 1,000-row fixtures, COPY staging lowered KPI-page elapsed time 86.6% and event-chunk elapsed time 68.2%; these are not full-run speedups.
+- No optimized full run was performed; the 50-minute target remains unverified. Automatic decay rollback, caller-ID/call-time optimization, and runtime experiment scheduling remain unbuilt.
 
 ## 1. Assumptions
 
@@ -72,19 +73,20 @@ We do not currently schedule submissions around approver hours; we will not
 claim that timing control until it is implemented. We also fail closed when a
 base version is stale or remote apply state cannot be proven.”
 
-### 03 — Platform/SRE / Kabir
+### 03 - Platform/SRE / Kabir
 
-Accepted: real kill/restart evidence, idempotent local persistence, no new
-broker/Redis, and resource measurement. Pushed back: declaring scale success
-without a valid full measurement. The original one-day public_03 target failed;
-the post-optimization 50-minute target is unverified. Alert delivery and a
-10× capacity result are not implemented. **Reply:** “We demonstrated process
-termination during a chunk transaction and pending approval, then restarted
-against the same database and simulator. The original public_03 run took 97.97
-minutes and failed the one-day target. COPY staging improved controlled
-1,000-row persistence fixtures, but we have not rerun the full load, so I
-cannot claim the 50-minute target. The runtime emits actionable state/metrics
-but has no paging integration.”
+Accepted: durable recovery, idempotent local effects, operational signals and
+no unnecessary stateful infrastructure. Pushed back on: claiming capacity
+without a representative run. **Reply:** "The pre-optimization full public_03
+run processed 9.74 million events in 5,878.203 seconds (97.97 minutes), with a
+final database size of about 8.79 GiB; it missed the one-day SRE threshold.
+The pre-COPY profile isolated KPI fact and event insertion as the largest
+measured database-call costs. COPY staging then reduced 1,000-row fixture
+medians by 86.6% and 68.2%, respectively, and the optimized code passed 306
+tests plus migration checks. Those tests and fixtures do not establish
+full-run throughput. A second full run was not performed because the execution
+window and available storage were insufficient for a representative
+multi-million-event profile. The 50-minute target remains unverified."
 
 ### 04 — Client Ops / Anita
 
@@ -112,19 +114,20 @@ invent them or schedule traffic. An expired proposal is not resubmitted as-is:
 new evidence and a fresh proposal identity are needed. A general historical
 dry-run and impact-ranking model remain incomplete.”
 
-### 06 — CTO / Aryamann
+### 06 - CTO / Aryamann
 
-Accepted: auditable choices, no unnecessary stateful infrastructure, and
-explicit scope cuts. The public run showed the workload and a meaningful
-database persistence cost; current fixture gains are not full-load results.
-Pushed back: declaring a 10× breakpoint without evidence. **Reply:** “The
-Controller uses one PostgreSQL store and a single ordered writer path. The
-original full public_03 run took 97.97 minutes; the largest later measured
-costs were KPI fact SQL and event insertion. COPY staging improved isolated
-1,000-row fixtures, but we have no post-change full run or valid 10× result.
-The remaining capacity questions are full-workload database/WAL behavior and
-the grading host's CPU/RSS profile. We deferred decay rollback, caller-ID
-health, call-time optimization, a UI and cross-tenant fairness.”
+Accepted: explainable decisions, measured database work and explicit scope
+cuts. Pushed back on: a claimed 10x breakpoint or full-run improvement without
+evidence. **Reply:** "The old full run took 97.97 minutes. A later pre-COPY
+profile measured 2,094.723 seconds in KPI fact SQL calls and 575.626 seconds in
+event insertion calls at the Controller database-call boundary; these are not
+PostgreSQL executor-only timings and profile stages can overlap. I replaced
+wide row-bound persistence on the two hot paths with PostgreSQL COPY staging
+and set-based merges, preserving replay checks and transaction/checkpoint
+boundaries. Isolated 1,000-row fixtures improved by 86.6% for a KPI page and
+68.2% for an event chunk. We did not rerun the full workload, so no end-to-end
+speedup or 50-minute result is claimed. Query-specific waits and the full-run
+worker CPU/RSS remain unknown."
 
 ## 4. Architecture
 
@@ -225,24 +228,158 @@ grader evidence: `reports/public_02.md`.
 
 ## 8. Scale
 
-The original full public_03 run processed 9,737,439 events/facts in 5,878.203
-seconds (97.97 minutes), or 1,656.962 events/second. Wall time was 1,175.641
-seconds per simulated day, missing the historical SRE threshold of under 600
-seconds/day. Ingestion lag peaked at 181 simulated minutes; latest-event
-persistence lag was 53.784 seconds. No experiment or decision loop ran, so
-decision lag was not measured. Peak worker memory is unknown because the
-retained sampler measured the launcher shim instead of the worker.
+### A. Original full-run baseline (before the persistence optimizations)
 
-The later 720-minute profile took 3,697.404 seconds and processed 5,891,391
-events including the full history backlog; it was not 10% of total event work.
-Neither this profile nor the historical full run used the post-COPY build. At
-10x scale, database write/WAL capacity is a plausible pressure point based on
-pre-COPY stage timings, but it is not a measured failure. Measure per-workflow
-throughput, database waits, WAL and lag before choosing partitioning. A future
-partition design would need to retain ordered ingestion and independent,
-durable workflow checkpoints; it has not been implemented or validated.
-See `reports/FINAL_PERFORMANCE_REPORT.md` and
-`reports/public_03_load_review.md` for the measurement limitations.
+The completed `public_03_load` run advanced all 7,200 simulated minutes and
+persisted 9,737,439 events and valid facts in **5,878.203 seconds (97.97
+minutes)**. This was the pre-optimization full benchmark. PostgreSQL grew from
+8,279,743 bytes to 9,441,285,823 bytes, or about **8.79 GiB** at the end. The
+SRE threshold of under 600 wall seconds per simulated day failed at 1,175.641
+seconds/day. Its final event checkpoint was 267 and analytics cursor was
+9,737,439. The saved whole-run CPU/RSS measurements are invalid: the sampler
+followed the Windows Python launcher rather than the worker, so full-run worker
+CPU and peak memory are unknown.
+
+### B. What the earlier stage profile identified
+
+The later 720-minute profile ran before the final COPY changes. It separated
+these accumulated stages:
+
+| Measured stage | Elapsed time | What the timer represents |
+|---|---:|---|
+| KPI fact insert `execute` | 2,094.723 s | Largest measured persistence operation |
+| Event insert `execute` | 575.626 s | Second largest measured persistence operation |
+| Ordered event-page reads for fact projection | 134.315 s | Source reads from stored event pages |
+| Fact-page transaction commits | 73.348 s | Commit time, much smaller than fact insert calls |
+| Python fact projection | 47.694 s | `derive_fact()` projection work |
+| Workflow-reference upserts | 11.560 s | Batched reference writes |
+| Fact payload construction | 10.255 s | Building database records |
+| Fact cursor updates | 6.566 s | Durable analytics cursor writes |
+
+The insert/read/commit timings are elapsed time measured around Controller
+database calls, not pure PostgreSQL executor time. Stage totals accumulate
+across observations and can be nested; they must not be added to predict wall
+runtime. Python projection was measured separately and was small compared with
+the two insertion stages. PostgreSQL counters showed reads, writes and WAL,
+but they do not attribute time to a particular query. `pg_stat_statements` and
+query-specific wait data were unavailable, so the profile did not prove how
+much KPI-call time was PostgreSQL execution versus driver, serialization,
+index, storage or wait time. The stage totals are recorded in
+`reports/public_03_10pct_20261109_metrics.json`; the narrative analysis is in
+`reports/PERFORMANCE_OPTIMIZATION_RECOMMENDATIONS.md`.
+
+### C. Changes implemented on the measured persistence paths
+
+- **KPI facts (`386cfa5`):** `DatabaseStore.commit_kpi_page()` copies bounded
+  fact records into a transaction-local PostgreSQL staging table, then merges
+  with set-based `INSERT ... SELECT ... ON CONFLICT (source_event_id)
+  DO NOTHING`. Workflow references, facts and the analytics cursor remain in
+  the same page transaction. The source-event uniqueness rule remains active.
+- **Streamed events (`005c1a7`):** event rows are copied to a transaction-local
+  staging table and merged set-wise with `ON CONFLICT (event_id) DO NOTHING`.
+  The affected-row count avoids collecting returned IDs for fresh inserts. A
+  single bounded conflict lookup runs only when some IDs were already present;
+  it compares event ID, chunk, kind and JSONB payload and rejects different
+  replay content. Event writes and the descriptor checkpoint remain atomic.
+- **Fewer round trips (`8f68b9a`, `10c98f9`, `99c8ad9`):** fact-page workflow
+  references are batched, fresh streamed-event readback is avoided, and the
+  streaming path avoids returning an ID collection when only an inserted-row
+  count is needed. Existing replay validation still runs for conflicts.
+- **Index maintenance (`3ef4344`):** removed the unused
+  `(kind, chunk_number)` event index after the retained database showed zero
+  scans and about 39.37 MB of index size; the chunk-only index was retained.
+  This reduces index storage and maintenance work in principle, but no
+  throughput improvement was measured from this index change.
+- **Migration safety (`0009_drop_unused_event_idx`, `344c4c5`):** the index
+  migration uses concurrent DDL and has a concurrent downgrade that restores
+  the index. Startup migration transaction handling was fixed for concurrent
+  DDL. Upgrade/downgrade and repeated-startup behavior were verified.
+- **Measurement support (`e2f20de`, `ba01164`, `ca5961c`):**
+  stage timers separate projection, reads, inserts, workflow writes, commits
+  and cursor/checkpoint work. PostgreSQL database/WAL counter snapshots add
+  context without claiming query-level attribution.
+
+The set-based paths preserve the existing unique constraints, foreign keys,
+indexes, event ordering and page/chunk transaction boundaries. KPI pages still
+advance their cursor atomically with fact writes; event checkpoints advance
+atomically with the event chunk. Exact event replays remain idempotent, and
+conflicting replays remain errors.
+
+### D. Controlled PostgreSQL fixture measurements
+
+Five alternating 1,000-row/page or 1,000-event/chunk trials were run against
+isolated PostgreSQL fixtures with the same schema and transaction work for each
+path. The KPI rows used representative call/lead facts across four workflows;
+event chunks used the same 500-row batch setting and checkpoint transaction.
+These are small microbenchmarks, not public-workload runs.
+
+| Operation | Previous path | Optimized path | Lower fixture elapsed time |
+|---|---:|---:|---:|
+| KPI page | 356.699 ms | 47.685 ms | **86.6%** |
+| Event chunk | 74.300 ms | 23.658 ms | **68.2%** |
+
+The KPI page included the workflow upsert, fact insert, cursor update and commit.
+Its prior fact SQL median was 281.374 ms with a 2.357 ms commit; the COPY path
+used about 5.7 ms for COPY plus a 26.049 ms merge, with a 2.447 ms commit. The
+event chunk included two 500-row batches and the checkpoint transaction. Its
+prior event SQL median was 58.068 ms with about a 1.178 ms commit; the COPY
+path took about 10.1 ms for COPY plus merge, with about a 2.1 ms commit. Paired
+`EXPLAIN (ANALYZE, BUFFERS, WAL)` fixture probes also measured server-side
+INSERT execution at 52.377 ms versus 30.425 ms for the COPY-stage merge on
+1,000 rows. Full-page-image counts differed and WAL deltas were cluster-wide,
+so no WAL reduction is claimed; these probes do not establish production-scale
+waits or workload throughput. Commit time was similar in the KPI trials; the
+observed gain was in the persistence SQL path.
+
+These reductions show the implementations are more efficient for the tested
+fixtures. They are not end-to-end speedups and must not be multiplied by event
+count or applied to the old wall time to project a new runtime. The qualitative
+expectation is less database-call work on comparable persistence pages; the
+actual full-run impact is unknown.
+
+### E. Earlier 720-minute profile (pre-COPY), not a post-optimization result
+
+This profile covered **720 of 7,200 simulated minutes** (10% of simulated
+time), but the simulator supplied all history first: **5,537,379 historical
+events + 354,012 live events = 5,891,391 total events**. That is about 60.5%
+of the full event count, not 10% of total event work. It took **3,697.404
+seconds (61.62 minutes)**; the timed interval including final replay and
+verification took 3,724.094 seconds. The simulator stopped at minute 720 with
+`finished=false`; the remaining 90% was not run. The result predates the final
+COPY optimizations and is historical workload/correctness evidence only. Its
+raw run log, samples and extracted metrics are retained at
+`reports/public_03_10pct_20261109_controller_run.jsonl`,
+`reports/public_03_10pct_20261109_samples.jsonl`, and
+`reports/public_03_10pct_20261109_metrics.json`. The original full-run log and
+samples remain at `reports/public_03_load.jsonl` and
+`reports/public_03_load_samples.jsonl`.
+
+At this checkpoint the database contained 5,891,391 events and facts, all
+valid, with zero invalid, incomplete or unsupported facts. The simulator
+checkpoint was 35, the analytics cursor was 5,891,391, and replaying the final
+committed chunk inserted zero rows. Pickup, engagement and business outcome
+were calculated separately. These checks support the observed ingestion and
+persistence state; they do not measure post-COPY performance.
+
+### F. Post-optimization correctness verification and full-run limitation
+
+The optimized implementation passed **306 tests** against isolated PostgreSQL:
+**214 unit/contract tests and 92 integration tests**. Coverage included COPY
+persistence, exact duplicate and conflicting replay, rollback, event/checkpoint
+atomicity, KPI/cursor atomicity, migrations, and subprocess crash recovery. The
+Alembic migration was downgraded from 0009 to 0008 and upgraded to head;
+`alembic check` reported no schema drift. Ruff, formatting, compileall and
+`git diff --check` passed. These results verify tested correctness and schema
+behavior; they are not performance measurements.
+
+The optimized implementation was fully verified through isolated PostgreSQL
+persistence measurements and the complete automated test suite. A second full
+`public_03_load` run was not performed because the available execution window
+and storage capacity were insufficient for a representative multi-million-
+event run. The previous full profile's database alone reached about 8.79 GiB.
+Consequently, optimized end-to-end runtime and the **50-minute target remain
+unverified**. No projected runtime or full-run percentage improvement is
+claimed.
 
 ## 9. Reliability
 
@@ -338,54 +475,76 @@ next iteration I would keep the KPIs separate, require a powered follow-up and
 make the configured guardrail outcome explicit before broader rollout. The
 grader table and incident timeline are in `reports/public_02.md`.
 
-### public_03_load
+### public_03_load and persistence results
 
-The historical full benchmark processed 9,737,439 events in 97.97 minutes and
-missed the SRE target. Its report is `reports/public_03_load.md`. The
-50-minute target after COPY optimization remains unverified; fixture gains are
-not full-run results.
+The only completed full workload was the **pre-optimization** run: 9,737,439
+events in 5,878.203 seconds (97.97 minutes), with a final database size of
+about 8.79 GiB. The later 720-minute profile took 3,697.404 seconds and
+processed 5,891,391 events including the full history backlog; it was **before
+COPY staging** and covered about 60.5% of the full event count.
+
+| Isolated fixture operation | Previous median | COPY/set-based median | Fixture elapsed reduction |
+|---|---:|---:|---:|
+| KPI page | 356.699 ms | 47.685 ms | 86.6% |
+| Event chunk | 74.300 ms | 23.658 ms | 68.2% |
+
+These are controlled database fixture results, not full-workload performance.
+The optimized build has not completed a new full `public_03_load` run, so its
+end-to-end runtime is unknown and the 50-minute target remains unverified. The
+full results and limitations are detailed in Section 8 and
+`reports/FINAL_PERFORMANCE_REPORT.md`.
 
 ## 12. Trade-offs & rejected alternatives
 
 | Option | Why considered | Why rejected / what instead |
 |---|---|---|
-| Redis, broker, worker fleet | Throughput and distributed scheduling | No measured need justified the operational/recovery cost; one ordered PostgreSQL writer is used. |
-| Direct config writes/auto-apply | Lower approval latency | Prompt changes use human approval; no direct config write path. |
-| LLM winner selection | Easy variant ranking | Deterministic statistics select winners; LLM only supplies candidates in incident workflow. |
-| Remove more KPI indexes/FKs | Reduce write maintenance | Existing analytics/provenance paths use them; no evidence supports removing them. |
-| Increase batches or concurrent writers | Reduce per-page overhead | No representative batch sweep; cursors/checkpoints remain ordered and serial. |
-| Decay rollback | Restore a former winner quickly | Not in the selected scope; incident correction uses a fresh governed proposal. |
-| Full load rerun after COPY | Verify target | Not run in this final phase; full-run target remains unverified. |
+| PostgreSQL COPY staging plus set-based merge | The pre-COPY profile measured 2,094.723 s in KPI insert calls and 575.626 s in event insert calls. | Selected after isolated alternating fixtures showed 86.6% and 68.2% lower page/chunk elapsed time; retains unique conflicts, replay checks and transaction boundaries. Full-run impact remains unknown. |
+| Larger batches or concurrent writers | Could reduce per-call overhead or overlap independent work. | Deferred: no representative batch sweep or evidence of safe spare database capacity. Ordered cursors/checkpoints and bounded memory take priority. |
+| Remove additional indexes/constraints | Could lower write maintenance. | Rejected without query-plan evidence. Only the unused event composite index with zero recorded scans was removed; no throughput gain is claimed for that change. |
+| Redis, broker or worker fleet | Potential parallel throughput and multi-tenant scheduling. | Not justified by available measurements; adds operational and recovery complexity. Existing ordered PostgreSQL path is retained. |
+| Direct config writes or auto-apply | Lower approval latency. | Rejected for customer-facing prompt changes; human approval, exact approved payload and config-version checks remain mandatory. |
+| Full post-optimization benchmark | Required to verify the under-50-minute objective. | Not run because available execution time and storage were insufficient for a representative new multi-million-event profile. Fixture results are not substituted for it. |
 
 ## 13. Known weaknesses
 
-- The 50-minute target is unverified; the last full run predates the latest
-  storage optimizations.
-- The SRE one-day target failed in the historical full run.
-- Public_03 worker CPU/RSS from that full run are unknown because its sampler
-  measured the launcher shim. Query-specific PostgreSQL waits are unavailable
-  without `pg_stat_statements`; shared PostgreSQL configuration was not changed.
-- Experiment evaluation requires an explicit caller-supplied plan and is not
-  scheduled by runtime.
-- Automatic decay rollback, caller-ID health, call-time optimization,
-  supervisor view, approver-aware batching and tenant fairness are not built.
-- Real simulator authentication/TLS requirements are undocumented; the
-  contract says nothing about them.
-- Dependencies are lower-bounded but not lock-file pinned.
+- The 50-minute full-workload target remains unverified. No full run was done
+  after COPY staging; fixture reductions cannot be projected to end-to-end time.
+- The historical full run missed the SRE one-day target (1,175.641 s/day vs.
+  under 600 s/day). The 720-minute partial profile is pre-COPY and is not 10%
+  of total event work.
+- Pre-COPY SQL timers were measured at the Controller database-call boundary,
+  not solely inside PostgreSQL. Query-specific waits were unavailable without
+  `pg_stat_statements`; no shared PostgreSQL configuration was changed.
+- Whole-run worker CPU and peak RSS from the original full benchmark are
+  unknown because its sampler measured the launcher shim. The partial profile
+  does not substitute for a full-run measurement.
+- The unused-index removal did not have an isolated throughput measurement;
+  it reduced index storage/maintenance only as an expected effect.
+- No large batch sweep or concurrency experiment supports higher defaults or
+  parallel writers. The code keeps ordered, serial checkpoint ownership.
+- Runtime experiment scheduling, automatic C7 decay rollback, caller-ID and
+  call-time optimization, a supervisor UI, approver-aware batching and
+  cross-tenant fairness are not implemented.
+- Simulator authentication/TLS requirements are undocumented; production
+  deployment policy remains an owner input.
 
 ## 14. If this went to production at Formi next month
 
-1. Agree real API authentication, network/TLS, retention, and remote-write
-   reconciliation contracts with platform owners.
-2. Run the optimized build against a fresh full public workload and the actual
-   grading resource envelope after disk/WAL preflight; validate all counters,
-   checkpoints, CPU/RSS and the 50-minute criterion.
-3. Add a production alert/export integration and dashboards for stale
-   ingestion, stuck outbox/proposals, API/DB errors, resource budgets and
-   credit burn.
-4. Agree statistically justified experiment plans and a runtime scheduling
-   policy before enabling automatic variant experiments.
-5. Implement approver-hours/fatigue batching and a consolidated supervisor
-   surface before scaling to many workflows.
-6. Calibrate population QA criteria and consider decay/rollback only with
-   explicit human policy and crash-safe approval semantics.
+1. **Days 1-2:** confirm simulator authentication/TLS, retention, approval
+   policy and remote ambiguity handling with platform and compliance owners.
+2. **Days 2-4:** provision a fresh isolated simulator/database and verify disk
+   headroom for a multi-million-event profile; the previous full database
+   reached about 8.79 GiB. Schedule a full optimized run only when execution
+   time and storage allow a representative completion.
+3. **Days 5-7:** during that run, collect worker-tree CPU/RSS, stage timings,
+   PostgreSQL execution/wait evidence and database/WAL counters. Verify all
+   event/fact counts, replay behavior, checkpoints and separate KPI denominators.
+4. **Days 8-9:** compare completed full-run wall time against 3,000 seconds.
+   Until then, treat COPY fixture reductions as local persistence evidence,
+   not an end-to-end capacity claim.
+5. **Days 8-11:** add production metrics export, alert routing and operator
+   runbooks for stalled checkpoints, unresolved remote writes, database
+   failures, lag and resource exhaustion.
+6. **Days 10-14:** agree explicit statistical and approver-scheduling policies
+   before enabling runtime experiment scheduling or broader multi-tenant
+   automation.
