@@ -4,7 +4,7 @@
 
 **Current phase:** Chunk 10 final audit and submission preparation
 **Current chunk:** 10 - local submission package prepared; owner actions pending
-**Current next action:** Confirm actual hours in `SUBMISSION_TEMPLATE.md` and keep `SUBMISSION.md` consistent; publish/share only through the owner's authorized submission workflow
+**Current next action:** Confirm actual hours in `SUBMISSION_TEMPLATE.md`; publish/share only through the owner's authorized submission workflow
 
 ## Implementation progress
 
@@ -301,7 +301,7 @@ At the time of the initial Chunk 1 work, no assessment scenario or full end-to-e
 
 ## Approved and unapproved decisions
 
-**Fixed by assignment/contract:** communicate with simulator only over HTTP; `run.sh <SIM_URL>` runs unattended to scenario completion; do not modify `sim/`; keep pickup and engagement distinct; controller changes pass approvals or policy-permitted auto-apply; deterministic winner selection, never LLM; detect populations rather than single calls; maintain local audit; recover after crash; public_01/public_02 end-to-end, and complete SUBMISSION.md are mandatory.
+**Fixed by assignment/contract:** communicate with simulator only over HTTP; `run.sh <SIM_URL>` runs unattended to scenario completion; do not modify `sim/`; keep pickup and engagement distinct; controller changes pass approvals or policy-permitted auto-apply; deterministic winner selection, never LLM; detect populations rather than single calls; maintain local audit; recover after crash; public_01/public_02 end-to-end, and complete `SUBMISSION_TEMPLATE.md` are mandatory.
 
 **User-approved infrastructure direction:** use an assessment-provided database if supplied; otherwise use the existing PostgreSQL installation. Do not install PostgreSQL 16 or another database solely for version alignment. Python 3.12 is the target; Docker Compose is optional for local development, and the user will start Docker Desktop manually if needed. SQLAlchemy and Alembic remain the preferred persistence tools.
 
@@ -350,7 +350,7 @@ Do not rewrite prior history.
 
 ## Chunk 10 final status
 
-Chunks 1-9 are complete. The local Chunk 10 package is prepared and verified. The actual-hours field in `SUBMISSION_TEMPLATE.md` and its matching `SUBMISSION.md` copy, publishing the local commits, and granting reviewer access remain pending; therefore Chunk 10 is not marked fully complete.
+Chunks 1-9 are complete. The local Chunk 10 package is prepared and verified. The actual-hours field in `SUBMISSION_TEMPLATE.md`, publishing the local commits, and granting reviewer access remain pending; therefore Chunk 10 is not marked fully complete.
 
 ### Chunk 3 measured evidence (synthetic HTTP stream, PostgreSQL 18)
 
@@ -553,10 +553,10 @@ Known limits: the synthetic 30,000-event development-host measurement is not a g
 
 ### Chunk 10.9 — Submission package preparation
 
-- Created `SUBMISSION.md` following the supplied template, with actual public
+- Completed the official `SUBMISSION_TEMPLATE.md`, with actual public
   results, scope decisions, six stakeholder replies, architecture, audit
-  example, known limits and the unverified performance target. Owner name and
-  actual time spent remain explicitly blank for the owner to complete.
+  example, known limits and the unverified performance target. Candidate name
+  is filled; actual time spent remains marked for owner confirmation.
 - Added `reports/SUBMISSION_CHECKLIST.md`, which maps required/optional
   materials to paths and verification status. It records the configured
   repository origin but notes that local commits have not been pushed and
@@ -582,11 +582,11 @@ Known limits: the synthetic 30,000-event development-host measurement is not a g
   final security review found no known secret values; `.env.example` contains
   placeholders only.
 - **Chunk 10 status: PREPARED LOCALLY; external/owner actions pending.** The
-  local package includes the filled evaluator-facing `SUBMISSION_TEMPLATE.md`
-  and its matching `SUBMISSION.md` copy, public_01/public_02 grader reports,
+  local package includes the filled evaluator-facing `SUBMISSION_TEMPLATE.md`,
+  public_01/public_02 grader reports,
   the public_03 load report, crash-recovery evidence, and
   incremental commits. The submitter must confirm actual hours in the official
-  `SUBMISSION_TEMPLATE.md` and matching `SUBMISSION.md`, confirm the remote,
+  `SUBMISSION_TEMPLATE.md`, confirm the remote,
   publish/transfer local commits and grant reviewer access. These
   steps were not performed because no push or external submission was
   authorized. The 50-minute target remains unverified.

@@ -1,16 +1,16 @@
 # Outcome-First Agent Loop — Submission
 
-**Name:** CHIRANJEEVI D · **Date:** 2026-11-09 · **Hours actually spent (be honest):** Not formally tracked. · **Language / storage:** Python 3.12 / PostgreSQL 18
+**Name:** CHIRANJEEVI D · **Date:** 2026-11-09 · **Hours actually spent (be honest):** OWNER INPUT REQUIRED — confirm actual hours; not formally tracked. · **Language / storage:** Python 3.12 / PostgreSQL 18
 
-> Official evaluator-facing submission. Confirm actual hours before submission; repository access has not been shared.
+> Official evaluator-facing submission. Confirm actual hours and complete the owner-controlled repository-sharing steps in `reports/SUBMISSION_CHECKLIST.md` before external submission.
 
 ## 0. TL;DR
 
-- The Controller ingests documented simulator events, derives separate KPI facts, and changes customer-facing configuration only through human approval.
-- `public_01` finished with no changes; `public_02` applied one approved prompt change graded beneficial, using four credits.
-- The pre-optimization full `public_03_load` took **5,878.203 seconds (97.97 minutes)** for **9,737,439 events**; its database reached about **8.79 GiB**.
-- On isolated 1,000-row fixtures, COPY staging lowered KPI-page elapsed time 86.6% and event-chunk elapsed time 68.2%; these are not full-run speedups.
-- No optimized full run was performed; the 50-minute target remains unverified. Automatic decay rollback, caller-ID/call-time optimization, and runtime experiment scheduling remain unbuilt.
+- **Objective:** build a restart-safe Controller that learns from observed outbound-call outcomes and changes customer-facing configuration only through the documented approval lifecycle.
+- **Design:** ordered event ingestion and KPI projection use durable PostgreSQL transactions and checkpoints; deterministic evaluation and incident response produce evidence-backed proposals, while human approval gates changes.
+- **Observed outcomes:** `public_01` completed without changes. In `public_02`, one approved prompt change was applied and graded beneficial; the workflow used four LLM credits.
+- **Performance evidence:** the pre-optimization full `public_03_load` run processed **9,737,439 events in 5,878.203 seconds (97.97 minutes)** and reached about **8.79 GiB**. On isolated 1,000-row fixtures, COPY staging reduced KPI-page elapsed time by **86.6%** and event-chunk elapsed time by **68.2%**.
+- **Limit:** fixture measurements show local persistence efficiency, not full-workload throughput. The optimized full workload was not measured; the **50-minute target remains unverified**. Automatic decay rollback, caller-ID/call-time optimization and runtime experiment scheduling remain unimplemented.
 
 ## 1. Assumptions
 
@@ -73,7 +73,7 @@ We do not currently schedule submissions around approver hours; we will not
 claim that timing control until it is implemented. We also fail closed when a
 base version is stale or remote apply state cannot be proven.”
 
-### 03 - Platform/SRE / Kabir
+### 03 — Platform/SRE / Kabir
 
 Accepted: durable recovery, idempotent local effects, operational signals and
 no unnecessary stateful infrastructure. Pushed back on: claiming capacity
@@ -114,7 +114,7 @@ invent them or schedule traffic. An expired proposal is not resubmitted as-is:
 new evidence and a fresh proposal identity are needed. A general historical
 dry-run and impact-ranking model remain incomplete.”
 
-### 06 - CTO / Aryamann
+### 06 — CTO / Aryamann
 
 Accepted: explainable decisions, measured database work and explicit scope
 cuts. Pushed back on: a claimed 10x breakpoint or full-run improvement without
@@ -530,21 +530,33 @@ full results and limitations are detailed in Section 8 and
 
 ## 14. If this went to production at Formi next month
 
-1. **Days 1-2:** confirm simulator authentication/TLS, retention, approval
-   policy and remote ambiguity handling with platform and compliance owners.
-2. **Days 2-4:** provision a fresh isolated simulator/database and verify disk
-   headroom for a multi-million-event profile; the previous full database
-   reached about 8.79 GiB. Schedule a full optimized run only when execution
-   time and storage allow a representative completion.
-3. **Days 5-7:** during that run, collect worker-tree CPU/RSS, stage timings,
-   PostgreSQL execution/wait evidence and database/WAL counters. Verify all
-   event/fact counts, replay behavior, checkpoints and separate KPI denominators.
-4. **Days 8-9:** compare completed full-run wall time against 3,000 seconds.
-   Until then, treat COPY fixture reductions as local persistence evidence,
-   not an end-to-end capacity claim.
-5. **Days 8-11:** add production metrics export, alert routing and operator
-   runbooks for stalled checkpoints, unresolved remote writes, database
-   failures, lag and resource exhaustion.
-6. **Days 10-14:** agree explicit statistical and approver-scheduling policies
-   before enabling runtime experiment scheduling or broader multi-tenant
-   automation.
+I would use explicit release gates rather than infer readiness from fixture
+performance:
+
+1. **Policy and service contract:** confirm authentication/TLS, retention,
+   approval policy and remote ambiguity procedures with platform and
+   compliance owners. The simulator contract does not specify production
+   authentication, so deployment requirements remain an owner input.
+2. **Infrastructure preflight:** provision an isolated simulator and database;
+   verify disk headroom, backup/restore and cleanup plans. The previous full
+   run database reached about **8.79 GiB**, so capacity must be sized from an
+   approved representative workload rather than the small fixtures.
+3. **Representative optimized run:** only when execution time and storage
+   permit a complete run, execute the full public workload. Capture worker
+   process-tree CPU and peak RSS, stage timings, database/WAL counters, and
+   PostgreSQL execution and wait evidence where available. Do not treat
+   accumulated stage timers as additive wall time.
+4. **Correctness acceptance:** reconcile simulator and database event/fact
+   counts; verify ordering, checkpoints, exact replay idempotency, conflicting
+   replay rejection, transaction rollback and separate KPI denominators.
+   Investigate any mismatch before evaluating speed.
+5. **Performance gate:** compare completed full-run wall time with the
+   **3,000-second** target. The isolated COPY fixture results are not a
+   substitute for this gate and do not support a projected runtime.
+6. **Operational readiness:** add metrics export and alert routing, then
+   rehearse runbooks for stalled checkpoints, unresolved remote writes,
+   database failures, ingestion lag and resource exhaustion.
+7. **Automation expansion:** agree explicit statistical and approver-scheduling
+   policies before enabling runtime experiment scheduling or broader
+   multi-tenant automation. Keep all customer-facing changes behind the
+   existing approval and configuration-version checks.

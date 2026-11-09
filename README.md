@@ -69,7 +69,7 @@ scenarios/
 stakeholders/             six memos from people who want things from you. They disagree.
 examples/naive_controller.py   shows the API round-trip. It is deliberately bad.
 docs/SIMULATOR.md         API, config, governance, events
-SUBMISSION_TEMPLATE.md    copy to SUBMISSION.md
+SUBMISSION_TEMPLATE.md    official evaluator-facing submission
 ```
 
 ```bash
@@ -399,7 +399,7 @@ batch scheduling, and cross-tenant credit fairness are outside the implemented s
 authentication is not specified by the contract and is unverified for production deployment.
 
 **Floor (mandatory):** the controller runs public_01 and public_02 end to end with no manual steps, keeps an
-audit trail (C12, even a minimal one), never breaks the constraints above, and `SUBMISSION.md` is complete.
+audit trail (C12, even a minimal one), never breaks the constraints above, and `SUBMISSION_TEMPLATE.md` is complete.
 Everything beyond that is your call. Write down what you cut and why.
 
 ## 7. Stakeholders
@@ -407,7 +407,7 @@ Everything beyond that is your call. Write down what you cut and why.
 `stakeholders/` holds six memos: Sales, a client's Compliance head, Platform/SRE, a client operations
 supervisor, Product, and the CTO. Each is reasonable on its own. Together they contradict each other, and
 some assume things about the system that aren't true. **Check their claims against the actual workflow
-policies.** In `SUBMISSION.md`, cover each one: what you accepted, what you pushed back on, and the reply
+policies.** In `SUBMISSION_TEMPLATE.md`, cover each one: what you accepted, what you pushed back on, and the reply
 you'd actually send them.
 
 ## 8. Deliverables
@@ -415,7 +415,7 @@ you'd actually send them.
 A git repository (private is fine; share access with the email on the form) containing:
 
 1. **Your controller**, with `run.sh`.
-2. **`SUBMISSION.md`**, from the template. This is where most of the evaluation happens.
+2. **`SUBMISSION_TEMPLATE.md`**, completed in the official template. This is where most of the evaluation happens.
 3. **`reports/`**: `sim grade` output for public_01 and public_02, plus your load-test numbers for public_03.
 4. **Crash-recovery evidence**: a script or log showing a kill/restart mid-run and a correct finish.
 5. **Commit history** that shows how your thinking progressed. Small, honest commits beat one squash.
@@ -439,6 +439,6 @@ thing you cut.
 
 - **AI tools are allowed, and we expect you to use them.** You must be able to defend every line and every
   decision without them in the review. Generic, unadapted output is easy to spot and scores poorly.
-- If something is ambiguous, **state your assumption in `SUBMISSION.md` and proceed**. Don't wait for an
+- If something is ambiguous, **state your assumption in `SUBMISSION_TEMPLATE.md` and proceed**. Don't wait for an
   answer. Questions are welcome but won't block you.
 - Don't share the assignment or your solution publicly.

@@ -1,11 +1,11 @@
 # Submission Checklist
 
-Checked: 2026-11-09. No external submission or GitHub push has been made.
+Checked: 2026-11-10. No external submission or GitHub push has been made.
 
 | Deliverable | Required or optional | Status | Location / verification |
 |---|---|---|---|
 | Controller and launcher | Required | COMPLETE | `controller/`, `run.sh`; README setup instructions reviewed. |
-| Official evaluator-facing submission | Required | READY - actual hours pending | `SUBMISSION_TEMPLATE.md`; candidate name is filled. `SUBMISSION.md` is the matching supporting copy. |
+| Official evaluator-facing submission | Required | READY - actual hours pending | `SUBMISSION_TEMPLATE.md`; official supplied filename and structure are preserved; candidate name is filled. |
 | Public_01 grader output | Required | COMPLETE | `reports/public_01.md`; recovered unchanged from recorded temporary grader output; SHA-256 source/destination match. Shows zero changes and 0% KPI delta. |
 | Public_02 grader and incident results | Required | COMPLETE | `reports/public_02.md`; one approved change rated beneficial, credit and timeline evidence. |
 | Public_03 load numbers | Required | COMPLETE, target failed | `reports/public_03_load.md` and raw logs/samples. Historical full run: 97.97 minutes; SRE time criterion failed. |
@@ -27,9 +27,8 @@ Checked: 2026-11-09. No external submission or GitHub push has been made.
 
 ## Before external submission
 
-1. Confirm and fill the actual hours in `SUBMISSION_TEMPLATE.md`; candidate name is filled. Keep `SUBMISSION.md` consistent.
-2. Review the claims and replies in the official template and matching copy;
-   be ready to defend them in the interview.
+1. Confirm and fill the actual hours in `SUBMISSION_TEMPLATE.md`; candidate name is filled.
+2. Review the claims and replies in the official template and be ready to defend them in the interview.
 3. Confirm the configured GitHub origin is the intended private repository.
    The Chunk 10 commits currently exist only in this local branch; publish or
    transfer them only through the owner's authorized workflow.

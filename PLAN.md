@@ -2,7 +2,7 @@
 
 ## 1. Objective and decision status
 
-Build a single-process controller that runs `./run.sh <SIM_URL>` to completion, consumes only the simulator HTTP contract, optimizes each workflow's declared primary KPI while protecting its separate guardrail, submits every controller-initiated customer-facing change through governance, and keeps a restart-safe audit trail. The mandatory delivery floor is unattended `public_01_dev` and `public_02_incidents`, C12 auditability, constraint compliance, and completed `SUBMISSION.md`. Other capabilities are scoped below.
+Build a single-process controller that runs `./run.sh <SIM_URL>` to completion, consumes only the simulator HTTP contract, optimizes each workflow's declared primary KPI while protecting its separate guardrail, submits every controller-initiated customer-facing change through governance, and keeps a restart-safe audit trail. The mandatory delivery floor is unattended `public_01_dev` and `public_02_incidents`, C12 auditability, constraint compliance, and completed `SUBMISSION_TEMPLATE.md`. Other capabilities are scoped below.
 
 This reviewed plan is the implementation specification. Chunks 1 through 9 are complete; Chunk 10 is PREPARED LOCALLY, with the actual-hours field and external repository sharing still pending. The statistical operating policy is documented in `docs/DECISION_POLICY.md`; optional capability scope remains unapproved until review. The approved infrastructure direction is Python 3.12 locally in `.venv`, PostgreSQL 18 in Docker for local development with a persistent named volume, SQLAlchemy async + asyncpg, and Alembic. If an assessment database is provided at execution, use it; otherwise use the configured local development PostgreSQL environment.
 
@@ -146,7 +146,7 @@ Current status: Chunks 1-9 are complete; Chunk 10's local package is prepared, b
 | 7. Public incident workflow | COMPLETE | Six subtask commits and public scenario report recorded in `PROGRESS.md` |
 | 8. Crash recovery demonstration | COMPLETE | Six subtask commits and real crash evidence recorded in `PROGRESS.md` and `reports/crash_recovery.md` |
 | 9. Load and observability | COMPLETE | Full and partial reports, stage telemetry, and verification recorded in `PROGRESS.md` and `reports/` |
-| 10. Submission and final grading | PREPARED LOCALLY | Official `SUBMISSION_TEMPLATE.md` is filled and `SUBMISSION.md` is its matching copy; actual hours, publishing local commits and reviewer access remain pending |
+| 10. Submission and final grading | PREPARED LOCALLY | Official `SUBMISSION_TEMPLATE.md` is filled; actual hours, publishing local commits and reviewer access remain owner actions |
 
 ### Chunk 1 — Runtime and launcher
 - **Objective/why:** replace naive launch with unattended `run.sh <SIM_URL>` and clean lifecycle.
@@ -252,7 +252,7 @@ Current status: Chunks 1-9 are complete; Chunk 10's local package is prepared, b
 
 ### Chunk 10 — Submission and final grading
 - **Objective/why:** complete evidence and stakeholder reasoning.
-- **Files:** create `SUBMISSION.md` and actual reports; modify README/run only for evidenced gaps.
+- **Files:** complete the official `SUBMISSION_TEMPLATE.md` and actual reports; modify README/run only for evidenced gaps.
 - **Dependencies:** previous chunks/results.
 - **Steps:** baselines, controller and grader; fill template with actual numbers; answer six memos and policy inaccuracies; genuine small commits; optional <=5-minute demo.
 - **Tests:** unit/integration/full clean launch; do not claim unrun tests. **Failure:** repeat restart/clean launch; reconcile report/run IDs.
@@ -288,7 +288,7 @@ Current status: Chunks 1-9 are complete; Chunk 10's local package is prepared, b
 - **Success:** chunk continuity/reconciliation, bounded memory, no duplicate effects, measured failure behavior and 10× bottleneck. Acceptable memory/DB ceilings are UNVERIFIED until host budget is verified.
 - **Evidence:** `reports/public_03_load.md`, `reports/public_03_load_review.md`, and the associated JSONL controller log/sample files. The run completed but failed the SRE time target; CPU and peak RSS are unverified due the Windows launcher measurement defect. The fix applies to future measurements only.
 
-## 13. Stakeholder responses for `SUBMISSION.md`
+## 13. Stakeholder responses for `SUBMISSION_TEMPLATE.md`
 
 Reflect actual wording and tradeoffs; verify per-workflow policy, which varies in objective, approver hours, caps, auto-apply and mid-flight behavior.
 
@@ -303,6 +303,6 @@ Each reply <=120 words per template. Do not invent memo statements.
 
 ## 14. Deliverables and unresolved risks
 
-Deliverables: working `run.sh`; README clean-start/debug instructions; completed `SUBMISSION.md`; `reports/` for public_01/02 grades, public_03 load, crash recovery and audit evidence; genuine incremental commits; optional short demo. `SUBMISSION_TEMPLATE.md` remains source; do not duplicate/move it. Do not fabricate reports or history.
+Deliverables: working `run.sh`; README clean-start/debug instructions; completed official `SUBMISSION_TEMPLATE.md`; `reports/` for public_01/02 grades, public_03 load, crash recovery and audit evidence; genuine incremental commits; optional short demo. Keep the supplied template filename and structure. Do not fabricate reports or history.
 
 Risks: (1) whether a DB connection is supplied at grading; (2) Docker availability and durable state path in grading; (3) undocumented retention and apply retry semantics; (4) statistical power/false-positive calibration within scenario duration; (5) imperfect hallucination signal and safety/engagement separation; (6) actual throughput/RSS/DB growth; (7) stakeholder requests beyond API affordances. Resolve with API inspection/tests/measurements; if unresolved, mark UNVERIFIED and use safe no-change/halt behavior.
