@@ -1,6 +1,6 @@
 # Outcome-First Agent Loop — Submission
 
-**Name:** CHIRANJEEVI D · **Date:** 2026-11-09 · **Hours actually spent (be honest):** [NEEDS YOUR CONFIRMATION: enter actual hours] · **Language / storage:** Python 3.12 / PostgreSQL 18
+**Name:** CHIRANJEEVI D · **Date:** 2026-11-09 · **Hours actually spent (be honest):** Not formally tracked. · **Language / storage:** Python 3.12 / PostgreSQL 18
 
 > Official evaluator-facing submission. Confirm actual hours before submission; repository access has not been shared.
 
