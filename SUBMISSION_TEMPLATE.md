@@ -1,6 +1,6 @@
 # Outcome-First Agent Loop — Submission
 
-**Name:** CHIRANJEEVI D · **Date:** 2026-11-09 · **Hours actually spent (be honest):** OWNER INPUT REQUIRED — confirm actual hours; not formally tracked. · **Language / storage:** Python 3.12 / PostgreSQL 18
+**Name:** CHIRANJEEVI D · **Date:** 2026-11-09 · **Hours actually spent (be honest):** Time spent: Not tracked. · **Language / storage:** Python 3.12 / PostgreSQL 18
 
 > Official evaluator-facing submission. Confirm actual hours and complete the owner-controlled repository-sharing steps in `reports/SUBMISSION_CHECKLIST.md` before external submission.
 
