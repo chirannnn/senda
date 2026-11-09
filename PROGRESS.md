@@ -546,3 +546,17 @@ Known limits: the synthetic 30,000-event development-host measurement is not a g
 - Focused storage/ingestion tests: **29 passed**. Full isolated PostgreSQL suite: **306 passed**. Ruff, formatting, compileall, Alembic checks, and `git diff --check` passed. No load test was run. See `reports/PERFORMANCE_OPTIMIZATION_RECOMMENDATIONS.md` for methodology and caveats.
 - Remaining work is deferred where evidence is insufficient: no further KPI index removal, larger batch defaults, or parallel writers are justified. KPI persistence remains the primary full-workload uncertainty; query-specific PostgreSQL waits are unavailable without shared configuration changes. The 50-minute target remains unverified.
 - Final verification on fresh isolated PostgreSQL database `formi_perf_verify_20261109`: full suite **306 passed in 29.24s**; Alembic current is `0009_drop_unused_event_idx`; `alembic check` reported no pending operations; catalog check confirmed the removed event index is absent. The suite includes replay/idempotency, event/checkpoint transaction rollback, KPI persistence rollback, and subprocess crash recovery (chunk rollback/replay plus pending approval applied once). Ruff, format check, compileall, and `git diff --check` passed. The retained `formi_public03_10pct_20261109` database was not modified. No simulator calls or load tests were run. The latest fixture medians are recorded in `reports/PERFORMANCE_OPTIMIZATION_RECOMMENDATIONS.md`; no full-run speedup is asserted.
+
+### Chunk 10.9 — Submission package preparation
+
+- Created `SUBMISSION.md` following the supplied template, with actual public
+  results, scope decisions, six stakeholder replies, architecture, audit
+  example, known limits and the unverified performance target. Owner name and
+  actual time spent remain explicitly blank for the owner to complete.
+- Added `reports/SUBMISSION_CHECKLIST.md`, which maps required/optional
+  materials to paths and verification status. It records the configured
+  repository origin but notes that local commits have not been pushed and
+  reviewer access has not been granted.
+- The assignment asks repository access to the email on the form; it does not
+  require an email draft or screenshots. No email was drafted or sent, no
+  external upload occurred, and no push was made.
