@@ -513,3 +513,51 @@ without `pg_stat_statements`; no shared PostgreSQL configuration was changed.
 No additional index removal, batch-size change, or concurrent writer is
 justified by current evidence. The ordered ingestion cursor and single
 transaction per chunk remain intentional correctness boundaries.
+
+### Final isolated PostgreSQL verification (2026-11-09)
+
+Created a fresh database, `formi_perf_verify_20261109`, on the local isolated
+PostgreSQL test cluster and ran the complete suite against it. Result:
+**306 passed in 29.24 seconds**, including storage, KPI, ingestion replay,
+checkpoint rollback, migration startup, and subprocess crash-recovery
+integration tests. The crash tests verify that an interrupted chunk
+transaction rolls back and replays without duplicate events, and that a
+pending approval survives store restart and is applied once. No live simulator
+was contacted.
+
+The migrated database reported Alembic revision
+`0009_drop_unused_event_idx`; `alembic check` found no pending schema changes,
+and catalog inspection confirmed the removed index is absent. Migration,
+replay/idempotency, event/checkpoint atomicity, analytics cursor rollback, and
+process-restart guarantees were exercised by the passing integration tests.
+The test database is separate from `formi_public03_10pct_20261109`, which was
+not modified.
+
+The complete implemented optimization history is:
+
+- `b0baff2` — bounded/configurable batch processing improvements.
+- `8f68b9a` — reduced KPI fact page database round trips.
+- `10c98f9` and `99c8ad9` — avoid fresh-event readback and returned-ID work
+  on the streaming insertion path while preserving replay validation.
+- `e2f20de`, `ba01164`, and `ca5961c` — stage-level and PostgreSQL counter
+  instrumentation used to identify costs.
+- `3ef4344` — removed the measured-unused event `(kind, chunk_number)` index.
+- `344c4c5` — fixed Alembic transaction ownership for startup concurrent DDL.
+- `386cfa5` — KPI COPY staging and set-based fact merge.
+- `005c1a7` — streamed-event COPY staging and set-based event merge.
+
+Exact 1,000-row KPI page medians: SQLAlchemy multi-row INSERT, **356.699 ms
+total**, including **281.374 ms fact SQL** and **2.357 ms commit**; COPY plus
+set-based merge, **47.685 ms total**, including about **5.7 ms COPY**, **26.049
+ms merge**, and **2.447 ms commit**. Exact 1,000-event chunk medians: prior
+multi-row INSERT, **74.300 ms total**, including **58.068 ms event SQL** and
+about **1.178 ms commit**; COPY staging, **23.658 ms total**, including about
+**10.1 ms event SQL** and **2.1 ms commit**. The KPI and event experiments used
+small alternating batches with isolated synthetic records. Batch SQL time and
+transaction commit time were timed separately; totals also include local
+preparation, workflow/cursor work and transaction overhead, so components do
+not necessarily sum exactly due to measurement nesting/rounding.
+
+Ruff, Ruff format check, compileall, `alembic current`, `alembic check`, and
+`git diff --check` passed. No full, partial, stress, or large benchmark was
+run. These results do not establish a 50-minute full-run result.
