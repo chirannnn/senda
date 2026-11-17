@@ -51,6 +51,8 @@ as hypotheses or future direction.
   safeguards, and limits for persistence, recovery, performance, and governance.
 - Public performance methodology preserves only scoped isolated fixture results;
   it makes no full-workload runtime or throughput claim.
+- Engineering principles and a bounded local operations guide added; no
+  production operations capability is implied.
 - Verified the repository is clean on local `main` before this transformation.
 - Read the existing README, plans/progress, architecture and policy docs,
   reports, template, configuration, migrations, runtime, storage, analytics,
