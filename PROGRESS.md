@@ -43,6 +43,8 @@ as hypotheses or future direction.
   incidents, and audit boundaries documented from source.
 - Failure modes, transaction guarantees, remote ambiguity, and restart procedure
   documented without exposing test-only destructive trigger commands.
+- Security boundaries, telemetry capabilities, and workload-specific scaling
+  limits documented from client, config, and telemetry code.
 - Verified the repository is clean on local `main` before this transformation.
 - Read the existing README, plans/progress, architecture and policy docs,
   reports, template, configuration, migrations, runtime, storage, analytics,
