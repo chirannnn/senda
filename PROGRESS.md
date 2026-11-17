@@ -61,6 +61,8 @@ as hypotheses or future direction.
   proposed work from present capabilities.
 - Messaging, voice/tone, and FAQ added with explicit maturity and performance
   claim guardrails.
+- LinkedIn, X, developer, Product Hunt, website, and demo drafts prepared; none
+  imply launch, availability, or customer traction.
 - Verified the repository is clean on local `main` before this transformation.
 - Read the existing README, plans/progress, architecture and policy docs,
   reports, template, configuration, migrations, runtime, storage, analytics,
