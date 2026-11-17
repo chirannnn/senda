@@ -45,6 +45,8 @@ as hypotheses or future direction.
   documented without exposing test-only destructive trigger commands.
 - Security boundaries, telemetry capabilities, and workload-specific scaling
   limits documented from client, config, and telemetry code.
+- Production readiness matrix, safe test tiers, and local contributor workflow
+  documented; historical verification is dated and not presented as rerun.
 - Verified the repository is clean on local `main` before this transformation.
 - Read the existing README, plans/progress, architecture and policy docs,
   reports, template, configuration, migrations, runtime, storage, analytics,
