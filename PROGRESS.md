@@ -33,6 +33,8 @@ as hypotheses or future direction.
   in the current unit.
 - Initial audience hypotheses and operator journeys documented; no customer
   validation is claimed.
+- Feature catalog now labels implemented, partial, and absent capabilities
+  with source boundaries.
 - Verified the repository is clean on local `main` before this transformation.
 - Read the existing README, plans/progress, architecture and policy docs,
   reports, template, configuration, migrations, runtime, storage, analytics,
