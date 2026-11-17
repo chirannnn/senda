@@ -27,6 +27,10 @@ as hypotheses or future direction.
 
 ### Completed
 
+- Senda product identity, vision, positioning, and brand foundation
+  (`2b0a180`).
+- Product principles, requirements, and explicit boundaries are being added
+  in the current unit.
 - Verified the repository is clean on local `main` before this transformation.
 - Read the existing README, plans/progress, architecture and policy docs,
   reports, template, configuration, migrations, runtime, storage, analytics,
