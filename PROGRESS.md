@@ -57,6 +57,8 @@ as hypotheses or future direction.
   discovery questions; no market validation or traction is claimed.
 - Competitive alternatives, business model, pricing questions, and a cautious
   go-to-market hypothesis documented without invented commercial facts.
+- Product and engineering roadmaps plus known limitations now separate
+  proposed work from present capabilities.
 - Verified the repository is clean on local `main` before this transformation.
 - Read the existing README, plans/progress, architecture and policy docs,
   reports, template, configuration, migrations, runtime, storage, analytics,
