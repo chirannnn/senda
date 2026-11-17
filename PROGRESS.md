@@ -37,6 +37,8 @@ as hypotheses or future direction.
   with source boundaries.
 - System overview, architecture decisions, and component map document the
   actual single-process runtime and its persistence boundaries.
+- Runtime data-flow diagrams and integration API reference now cover ingestion,
+  analytics, governance, safe apply, recovery, and local topology.
 - Verified the repository is clean on local `main` before this transformation.
 - Read the existing README, plans/progress, architecture and policy docs,
   reports, template, configuration, migrations, runtime, storage, analytics,
