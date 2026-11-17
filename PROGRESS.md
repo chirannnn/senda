@@ -53,6 +53,8 @@ as hypotheses or future direction.
   it makes no full-workload runtime or throughput claim.
 - Engineering principles and a bounded local operations guide added; no
   production operations capability is implied.
+- Customer-problem and target-market hypotheses documented with explicit
+  discovery questions; no market validation or traction is claimed.
 - Verified the repository is clean on local `main` before this transformation.
 - Read the existing README, plans/progress, architecture and policy docs,
   reports, template, configuration, migrations, runtime, storage, analytics,
