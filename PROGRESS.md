@@ -49,6 +49,8 @@ as hypotheses or future direction.
   documented; historical verification is dated and not presented as rerun.
 - Architecture decision record explains evidence, alternatives, trade-offs,
   safeguards, and limits for persistence, recovery, performance, and governance.
+- Public performance methodology preserves only scoped isolated fixture results;
+  it makes no full-workload runtime or throughput claim.
 - Verified the repository is clean on local `main` before this transformation.
 - Read the existing README, plans/progress, architecture and policy docs,
   reports, template, configuration, migrations, runtime, storage, analytics,
