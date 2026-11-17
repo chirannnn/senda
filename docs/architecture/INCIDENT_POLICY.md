@@ -1,8 +1,8 @@
-# Public incident operating policy
+﻿# Population incident policy
 
-This policy defines conservative controller gates for the public incident
-workflow. These are engineering defaults for evidence quality; they are not
-business harm targets and do not use scenario truth.
+This policy defines conservative evidence gates for the implemented population
+incident workflow. The evidence-quality thresholds are engineering rules, not
+business harm targets.
 
 ## Detection
 
@@ -68,3 +68,4 @@ not been calibrated as business policy. The documented APIs do not provide
 lookup endpoints for ambiguous suggestion or validation POSTs; those phases
 halt for manual review. Incident orchestration is bounded by observed facts and
 simulated time and does not infer scenario truth.
+

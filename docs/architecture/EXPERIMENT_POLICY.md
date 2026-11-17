@@ -1,4 +1,4 @@
-# Statistical decision policy (stat-policy-v1)
+﻿# Experiment evaluation policy
 
 ## Scope and inputs
 
@@ -117,9 +117,9 @@ Only a matching persisted winner may enter proposal creation. The proposal path
 re-reads workflow metadata and full config, checks config version/objective and
 allowed option, changes only the selected cohort/dimension allocation, and
 submits through the existing `POST /approvals` lifecycle. The proposal carries
-the observed evidence, decision reason, policy version and exact diff. No code
-in this chunk applies a config or bypasses human approval. Non-winners, stale
-config and missing evidence are audited with no proposal.
+the observed evidence, decision reason, policy version and exact diff. The
+evaluator does not apply a configuration or bypass human approval. Non-winners,
+stale configuration, and missing evidence are audited with no proposal.
 
 No LLM participates in estimation, uncertainty, multiplicity, stopping, KPI
 selection or winner selection.
@@ -140,4 +140,5 @@ selection or winner selection.
   guarantee under severe cluster-size skew, time drift, noncompliance or
   crossover selection. Input assumptions are stored for review.
 - Statistical decisions do not implement winner decay, rollback, incident
-  detection or experiment traffic assignment. Those are outside this chunk.
+  detection or experiment traffic assignment. Those are not part of the current evaluator.
+

@@ -65,6 +65,8 @@ as hypotheses or future direction.
   imply launch, availability, or customer traction.
 - Root README rewritten as the Senda project entry point with architecture,
   setup, testing, maturity, and performance boundaries.
+- Detailed experiment and population-incident policies relocated into the
+  architecture documentation and terminology updated.
 - Verified the repository is clean on local `main` before this transformation.
 - Read the existing README, plans/progress, architecture and policy docs,
   reports, template, configuration, migrations, runtime, storage, analytics,
