@@ -35,6 +35,8 @@ as hypotheses or future direction.
   validation is claimed.
 - Feature catalog now labels implemented, partial, and absent capabilities
   with source boundaries.
+- System overview, architecture decisions, and component map document the
+  actual single-process runtime and its persistence boundaries.
 - Verified the repository is clean on local `main` before this transformation.
 - Read the existing README, plans/progress, architecture and policy docs,
   reports, template, configuration, migrations, runtime, storage, analytics,
