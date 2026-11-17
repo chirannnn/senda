@@ -39,6 +39,8 @@ as hypotheses or future direction.
   actual single-process runtime and its persistence boundaries.
 - Runtime data-flow diagrams and integration API reference now cover ingestion,
   analytics, governance, safe apply, recovery, and local topology.
+- PostgreSQL model relationships, transaction units, governance, experiments,
+  incidents, and audit boundaries documented from source.
 - Verified the repository is clean on local `main` before this transformation.
 - Read the existing README, plans/progress, architecture and policy docs,
   reports, template, configuration, migrations, runtime, storage, analytics,
