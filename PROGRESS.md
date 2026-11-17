@@ -47,6 +47,8 @@ as hypotheses or future direction.
   limits documented from client, config, and telemetry code.
 - Production readiness matrix, safe test tiers, and local contributor workflow
   documented; historical verification is dated and not presented as rerun.
+- Architecture decision record explains evidence, alternatives, trade-offs,
+  safeguards, and limits for persistence, recovery, performance, and governance.
 - Verified the repository is clean on local `main` before this transformation.
 - Read the existing README, plans/progress, architecture and policy docs,
   reports, template, configuration, migrations, runtime, storage, analytics,
