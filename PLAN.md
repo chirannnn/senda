@@ -3,9 +3,9 @@
 ## Objective
 
 Present this repository as a credible, evidence-led Senda engineering
-prototype. Replace evaluator- and assignment-oriented documentation with a
+prototype. Replace legacy documentation with a
 clear product narrative, source-verified architecture, practical developer
-guidance, honest production assessment, and launch drafts. Preserve working
+guidance, an honest production-readiness review, and launch drafts. Preserve working
 application behavior, migrations, tests, and useful engineering decisions.
 
 ## Guardrails
@@ -16,7 +16,7 @@ application behavior, migrations, tests, and useful engineering decisions.
   controller prototype.
 - Do not modify application behavior, API contracts, schemas, migrations,
   dependencies, simulator behavior, or infrastructure.
-- Remove evaluator-only documents from the current public-facing tree while
+- Remove submission-only documents from the current public-facing tree while
   preserving the repository's Git history; do not rewrite history.
 - Do not run full or partial workloads, stress tests, or benchmarks as part of
   the documentation transformation.
@@ -49,7 +49,7 @@ application behavior, migrations, tests, and useful engineering decisions.
 4. Document business hypotheses and roadmap without implying validation.
 5. Prepare restrained brand and launch drafts, then rewrite the README as the
    repository entry point.
-6. Remove obsolete evaluator-facing material, update the progress log, and
+6. Remove obsolete handoff material, update the progress log, and
    verify links, claims, and repository cleanliness.
 
 ## Acceptance criteria
@@ -66,7 +66,7 @@ application behavior, migrations, tests, and useful engineering decisions.
 - Production readiness is assessed by dimension; the product is not labeled
   production-ready.
 - Launch drafts contain no fabricated URL, contact, customer, or traction.
-- Evaluator-only submission and stakeholder documents are absent from the
+- Legacy handoff and stakeholder documents are absent from the
   current tree; source code, tests, migrations, and useful test harnesses are
   retained.
 - Markdown links and `git diff --check` pass. No application tests, benchmark,

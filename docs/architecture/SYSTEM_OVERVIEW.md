@@ -43,4 +43,4 @@ flowchart LR
 The repository demonstrates a durable controller and integration patterns.
 It does not contain a hosted control plane, user interface, production
 identity system, tenant isolation, or deployment/alerting stack. See the
-[readiness assessment](PRODUCTION_READINESS.md).
+[readiness review](PRODUCTION_READINESS.md).

@@ -64,3 +64,7 @@ quick start.
 
 Product, market, and launch claims should be reviewed against the current
 implementation and evidence before external use.
+
+The top-level [transformation plan](../PLAN.md) and
+[progress record](../PROGRESS.md) track documentation work and current owner
+decisions.

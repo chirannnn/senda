@@ -21,4 +21,4 @@ The prototype connects to the documented local HTTP simulator contract and
 uses PostgreSQL for durable state. Its integration tests exercise storage,
 recovery, analytics and governance behavior. It has no customer login,
 organization boundary, UI, deployment packaging, or commercial service
-operations. See the [production readiness assessment](../architecture/PRODUCTION_READINESS.md).
+operations. See the [production readiness review](../architecture/PRODUCTION_READINESS.md).

@@ -1,6 +1,6 @@
-# Production-readiness assessment
+# Production readiness
 
-This assessment describes the repository, not a deployment review. A local
+This review describes the repository, not a deployment certification. A local
 controller prototype is not considered production-ready as a SaaS product.
 
 | Area | Status | Evidence and remaining work |

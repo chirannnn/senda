@@ -45,9 +45,10 @@ business harm targets.
 
 ## Governance and monitoring
 
-- A passing prompt candidate is submitted through Chunk 5 `/approvals` with the
-  exact validation run ID, base config version and prompt-only diff. Only the
-  Chunk 5 approval reconciler can apply it.
+- A passing prompt candidate is submitted through the documented `/approvals`
+  path with the exact validation run ID, base config version and prompt-only
+  diff. Only the
+  governance reconciler can apply it.
 - Pending approvals are polled once per simulator tick. Rejected, expired,
   lapsed, stale and ambiguous outcomes remain durable and are never applied.
 - After apply, the controller waits for the same 30-person and 75%-complete

@@ -15,8 +15,9 @@ person remains in one arm. The evaluator therefore excludes every person who
 appears in more than one tested arm, and resamples remaining observations by
 person cluster. Calls from one person are never treated as independent
 observations. This conservative exclusion can reduce evidence and can introduce
-selection effects; it does not make the simulator's assignment a person-level
-randomization guarantee. The result must disclose the crossover count.
+selection effects; it does not make the simulator's per-dial allocation a
+person-level randomization guarantee. The result must disclose the crossover
+count.
 
 Pickup and engagement are estimated separately:
 
@@ -63,7 +64,7 @@ target.
 The plan also requires a predeclared allocation imbalance tolerance. After
 crossover exclusion, the evaluator compares the observed person-arm ratio to the
 declared allocation ratio. An out-of-tolerance comparison is insufficient; it
-is not repaired by reweighting. Since the simulator's assignment is per dial,
+is not repaired by reweighting. Since the simulator's allocation is per dial,
 this person-ratio check is a conservative diagnostic, not proof of randomized
 person-level allocation.
 
@@ -126,9 +127,9 @@ selection or winner selection.
 
 ## Known limits
 
-- No simulator API currently guarantees stable person-to-arm assignment. Cross-
-  arm people are excluded, but this cannot fully remove assignment-selection
-  bias or prove person-level randomization.
+- No simulator API currently guarantees stable person-to-arm allocation.
+  Cross-arm people are excluded, but this cannot fully remove selection bias
+  or prove person-level randomization.
 - The controller runtime does not schedule or automatically start experiment
   plans. An orchestration layer must supply the predeclared plan inputs and call
   the evaluator at the terminal cutoff. Missing baselines, cluster assumptions,
@@ -140,5 +141,6 @@ selection or winner selection.
   guarantee under severe cluster-size skew, time drift, noncompliance or
   crossover selection. Input assumptions are stored for review.
 - Statistical decisions do not implement winner decay, rollback, incident
-  detection or experiment traffic assignment. Those are not part of the current evaluator.
+  detection or experiment traffic allocation. Those are not part of the
+  current evaluator.
 

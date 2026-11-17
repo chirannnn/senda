@@ -49,4 +49,4 @@ erDiagram
 
 The exact revision history is under `migrations/versions/`. Migration checks
 and isolated PostgreSQL verification are reported in
-[`ENGINEERING_VERIFICATION.md`](../engineering/ENGINEERING_VERIFICATION.md).
+[testing strategy](../engineering/TESTING_STRATEGY.md).

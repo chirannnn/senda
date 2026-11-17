@@ -35,3 +35,20 @@ remote effects. Operators must retain the same PostgreSQL data and the same
 remote service state across restart. Recovery tests are in
 `tests/integration/`; no production disaster-recovery or backup/restore
 service is included.
+
+## Retained process-kill evidence
+
+The repository records a real process termination during an open event-chunk
+insert transaction. The test observed no partial event rows or checkpoint
+after termination; restarting with the same database and service state
+re-ingested the descriptor without duplicate event IDs. A second termination
+occurred while an approval was remotely pending but its local response update
+was blocked. On restart, the controller reconciled by the stable proposal
+identity, did not submit a duplicate approval, and applied the approved change
+once after approval. The historical run and recovery tests reported one
+configuration-history effect and terminal outbox/audit records. The
+run-specific report has been replaced by this system-level summary; source
+integration coverage remains under `tests/integration/`.
+
+This evidence demonstrates those tested failure windows only. It does not
+prove exactly-once behavior for every remote service or every failure mode.

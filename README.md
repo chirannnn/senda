@@ -71,6 +71,7 @@ production-ready as a SaaS product.
 
 ## Architecture and documentation
 
+- [Documentation index](docs/README.md)
 - [System overview](docs/architecture/SYSTEM_OVERVIEW.md)
 - [Architecture and decisions](docs/architecture/ARCHITECTURE.md)
 - [Data flows and diagrams](docs/architecture/DATA_FLOW.md)
@@ -114,6 +115,7 @@ sim/              bundled local simulator harness
 scenarios/        local simulator fixtures
 tests/            unit, contract and PostgreSQL integration tests
 scripts/          local measurement tooling
+examples/         deliberately simplistic API sample; not the production runtime
 ```
 
 ## Quick start
@@ -135,11 +137,13 @@ Copy-Item .env.example .env
 py -3.12 -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
 docker compose -f docker-compose.dev.yml up -d postgres
-$env:CONTROLLER_DATABASE_URL = 'postgresql+asyncpg://formi_dev:<url-encoded-password>@127.0.0.1:5433/formi_dev'
+$env:CONTROLLER_DATABASE_URL = 'postgresql+asyncpg://<POSTGRES_USER>:<url-encoded-password>@127.0.0.1:5433/<POSTGRES_DB>'
 .\.venv\Scripts\python.exe -m alembic -c alembic.ini upgrade head
 ```
 
-The example values are local placeholders. The application reads
+Replace the placeholders with the `POSTGRES_USER` and `POSTGRES_DB` values in
+your local `.env`, and URL-encode any reserved password characters. The
+example values are local placeholders. The application reads
 `CONTROLLER_DATABASE_URL` from its process environment; Python does not load
 `.env`. Keep `.env` untracked and never use these example credentials outside
 local development.
@@ -155,7 +159,7 @@ In one terminal, start the local development fixture:
 In a second terminal, set the same database URL and run:
 
 ```powershell
-$env:CONTROLLER_DATABASE_URL = 'postgresql+asyncpg://formi_dev:<url-encoded-password>@127.0.0.1:5433/formi_dev'
+$env:CONTROLLER_DATABASE_URL = 'postgresql+asyncpg://<POSTGRES_USER>:<url-encoded-password>@127.0.0.1:5433/<POSTGRES_DB>'
 .\.venv\Scripts\python.exe -m controller http://127.0.0.1:8700
 ```
 
@@ -182,8 +186,8 @@ and deletes rows from Controller tables before each database test; never point
 it at development or retained data.
 
 ```powershell
-docker compose -f docker-compose.dev.yml exec postgres createdb -U formi_dev formi_test
-$env:CONTROLLER_TEST_DATABASE_URL = 'postgresql+asyncpg://formi_dev:<url-encoded-password>@127.0.0.1:5433/formi_test'
+docker compose -f docker-compose.dev.yml exec postgres sh -c 'createdb -U "$POSTGRES_USER" senda_test'
+$env:CONTROLLER_TEST_DATABASE_URL = 'postgresql+asyncpg://<POSTGRES_USER>:<url-encoded-password>@127.0.0.1:5433/senda_test'
 .\.venv\Scripts\python.exe -m pytest -q tests/integration
 .\.venv\Scripts\python.exe -m pytest -q
 ```
