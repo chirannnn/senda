@@ -41,6 +41,8 @@ as hypotheses or future direction.
   analytics, governance, safe apply, recovery, and local topology.
 - PostgreSQL model relationships, transaction units, governance, experiments,
   incidents, and audit boundaries documented from source.
+- Failure modes, transaction guarantees, remote ambiguity, and restart procedure
+  documented without exposing test-only destructive trigger commands.
 - Verified the repository is clean on local `main` before this transformation.
 - Read the existing README, plans/progress, architecture and policy docs,
   reports, template, configuration, migrations, runtime, storage, analytics,
