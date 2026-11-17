@@ -36,7 +36,7 @@ by person. This does not prove person-level randomization or eliminate
 selection bias. No LLM makes a statistical decision. The runtime does not
 schedule experiments or assign traffic.
 
-See [statistical policy](../DECISION_POLICY.md) for the implemented policy
+See [statistical policy](EXPERIMENT_POLICY.md) for the implemented policy
 details and assumptions. The decision policy remains an engineering policy,
 not a validated business target or customer-approved efficacy threshold.
 

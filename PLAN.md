@@ -42,7 +42,7 @@ application behavior, migrations, tests, and useful engineering decisions.
 
 1. Define Senda's vision, audience hypotheses, principles, capabilities, and
    boundaries.
-2. Replace assignment architecture notes with source-accurate system, data,
+2. Replace legacy architecture notes with source-accurate system, data,
    API, reliability, security, and operations documentation.
 3. Establish engineering, testing, performance, and production-readiness
    guidance grounded in current code and evidence.
