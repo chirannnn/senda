@@ -2,7 +2,7 @@
 
 ### Make every interaction count.
 
-Senda is an intelligent outbound operations platform direction: help teams
+Senda explores an intelligence layer for outbound operations: helping teams
 understand workflow outcomes, measure meaningful changes, evaluate
 improvements with observed evidence, and keep sensitive configuration changes
 reviewable. This repository contains a **simulator-backed controller
